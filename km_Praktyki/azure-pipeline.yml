@@ -1,0 +1,32 @@
+trigger:
+  - main
+
+pool:
+  name: Default
+
+steps:
+- checkout: self
+
+- task: Docker@2
+  displayName: Build image
+  inputs:
+    command: build
+    repository: km-praktyki
+    Dockerfile: Dockerfile
+    tags: |
+      latest
+      $(Build.BuildId)
+
+- powershell: |
+    docker stop km-praktyki-app 2>$null
+    docker rm km-praktyki-app 2>$null
+
+    docker run -d `
+      --name km-praktyki-app `
+      -p 5173:80 `
+      km-praktyki:$(Build.BuildId)
+  displayName: Run container
+
+- powershell: |
+    docker ps
+  displayName: Show running containers
