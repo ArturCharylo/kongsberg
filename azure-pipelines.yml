@@ -27,9 +27,9 @@ steps:
       --name km-praktyki-app `
       -p 5173:80 `
       km-praktyki:$(Build.BuildId)
-    ``
   displayName: Run container
 
 - powershell: |
-    docker ps
-  displayName: Show running containers
+    docker images
+    docker ps -a
+  displayName: Diagnostics
