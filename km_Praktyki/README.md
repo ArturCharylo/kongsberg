@@ -1,5 +1,21 @@
 # React + TypeScript + Vite
 
+## Uruchomienie w Dockerze
+
+Zbuduj obraz z katalogu `km_Praktyki`:
+
+```bash
+docker build -t km-praktyki .
+```
+
+Uruchom kontener z mapowaniem portu aplikacji na hosta:
+
+```bash
+docker run --rm -p 5173:5173 km-praktyki
+```
+
+Aplikacja będzie dostępna pod adresem http://localhost:5173.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
