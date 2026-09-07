@@ -66,13 +66,9 @@ function App() {
     <main className="app-shell">
       {!showList ? (
         <PagePanel eyebrow="Strona główna" title="Dodaj tekst" className="home-panel">
-          <TextForm onSubmit={submitText} disabled={isLoading} />
+          <TextForm onSubmit={submitText} onShowList={() => setShowList(true)} disabled={isLoading} />
           {error && <p className="error-message" role="alert">{error}</p>}
-          <div className="actions">
-            <button type="button" className="secondary-button" onClick={() => setShowList(true)}>
-              Lista
-            </button>
-          </div>
+
         </PagePanel>
       ) : (
         <PagePanel eyebrow="Podstrona listy" title="Lista tekstów" className="list-panel">

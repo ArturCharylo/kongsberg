@@ -8,9 +8,9 @@
 }
 
 .page-panel {
-  width: min(100%, 700px);
-  min-height: 560px;
-  padding: 48px 56px;
+  width: min(100%, 670px);
+  min-height: 480px;
+  padding: 40px 40px;
   box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -78,7 +78,7 @@ textarea:focus {
 .actions {
   display: flex;
   gap: 18px;
-  margin-top: 18px;
+  margin-top: 25px;
 }
 
 button {

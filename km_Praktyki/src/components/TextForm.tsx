@@ -2,10 +2,11 @@ import { useState } from 'react'
 
 type TextFormProps = {
   onSubmit: (content: string) => Promise<void>
+  onShowList: () => void
   disabled?: boolean
 }
 
-export function TextForm({ onSubmit, disabled = false }: TextFormProps) {
+export function TextForm({ onSubmit, onShowList, disabled = false }: TextFormProps) {
   const [content, setContent] = useState('')
 
   const submit = async () => {
@@ -42,9 +43,22 @@ export function TextForm({ onSubmit, disabled = false }: TextFormProps) {
         rows={3}
         disabled={disabled}
       />
-      <button type="button" onClick={() => void submit()} disabled={disabled}>
+      <div className="actions">
+      <button
+        type="button"
+        onClick={() => void submit()}
+        disabled={disabled}
+      >
         Wyślij
       </button>
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={onShowList}
+      >
+        Lista
+      </button>
+      </div>
     </>
   )
 }
