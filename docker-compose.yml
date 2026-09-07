@@ -28,5 +28,16 @@ services:
       db:
         condition: service_healthy
 
+  frontend:
+    container_name: km-praktyki-app
+    build:
+      context: ./km_Praktyki
+      dockerfile: Dockerfile
+    ports:
+      - '5173:80'
+    depends_on:
+      api:
+        condition: service_started
+
 volumes:
   postgres_data:

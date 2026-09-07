@@ -7,27 +7,25 @@ pool:
 steps:
 - checkout: self
 
-- task: Docker@2
-  displayName: Build image
-  inputs:
-    command: build
-    repository: km-praktyki
-    Dockerfile: km_Praktyki/Dockerfile
-    tags: |
-      latest
-      $(Build.BuildId)
+- powershell: |
+    docker compose down --remove-orphans
+    docker rm -f km-praktyki-app 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      $global:LASTEXITCODE = 0
+    }
+  displayName: Stop previous application stack
 
 - powershell: |
-    docker ps -aq --filter "name=km-praktyki-app" | ForEach-Object {
-    docker stop $_
-    docker rm $_
+    docker compose build --pull
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
     }
 
-    docker run -d `
-      --name km-praktyki-app `
-      -p 5173:80 `
-      km-praktyki:$(Build.BuildId)
-  displayName: Run container
+    docker compose up -d
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
+    }
+  displayName: Build and run application stack
 
 - powershell: |
     docker images
