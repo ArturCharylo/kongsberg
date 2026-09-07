@@ -16,7 +16,7 @@ npm install
 npm run dev
 ```
 
-Aplikacja będzie dostępna pod adresem http://localhost:5173, a dokumentacja API pod adresem http://localhost:8000/docs.
+Aplikacja będzie dostępna pod adresem http://localhost:5173. Frontend przekazuje żądania `/api` do FastAPI przez prywatną sieć Docker Compose.
 
 API udostępnia operacje:
 

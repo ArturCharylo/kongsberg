@@ -8,20 +8,27 @@ steps:
 - checkout: self
 
 - powershell: |
-    docker compose down --remove-orphans
-    docker rm -f km-praktyki-app 2>$null
-    if ($LASTEXITCODE -ne 0) {
-      $global:LASTEXITCODE = 0
+    docker compose -p km-praktyki down --remove-orphans
+
+    $containers = @(
+      docker ps -aq --filter "name=km-praktyki-app"
+      docker ps -aq --filter "publish=5173"
+      docker ps -aq --filter "publish=8000"
+      docker ps -aq --filter "publish=5432"
+    ) | Where-Object { $_ } | Sort-Object -Unique
+
+    if ($containers) {
+      docker rm -f $containers
     }
-  displayName: Stop previous application stack
+  displayName: Stop previous application containers
 
 - powershell: |
-    docker compose build --pull
+    docker compose -p km-praktyki build --pull
     if ($LASTEXITCODE -ne 0) {
       exit $LASTEXITCODE
     }
 
-    docker compose up -d
+    docker compose -p km-praktyki up -d
     if ($LASTEXITCODE -ne 0) {
       exit $LASTEXITCODE
     }
