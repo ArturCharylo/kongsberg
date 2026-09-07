@@ -12,7 +12,7 @@ steps:
   inputs:
     command: build
     repository: km-praktyki
-    Dockerfile: Dockerfile
+    Dockerfile: km_Praktyki/Dockerfile
     tags: |
       latest
       $(Build.BuildId)
