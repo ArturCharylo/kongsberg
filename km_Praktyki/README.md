@@ -1,4 +1,28 @@
-# React + TypeScript + Vite
+# React + FastAPI + PostgreSQL
+
+## Uruchomienie lokalne
+
+Uruchom bazę danych i API z katalogu głównego repozytorium:
+
+```bash
+docker compose up --build
+```
+
+W drugim terminalu uruchom frontend:
+
+```bash
+cd km_Praktyki
+npm install
+npm run dev
+```
+
+Aplikacja będzie dostępna pod adresem http://localhost:5173, a dokumentacja API pod adresem http://localhost:8000/docs.
+
+API udostępnia operacje:
+
+- `GET /api/texts` - pobieranie zapisanych tekstów,
+- `POST /api/texts` - zapis tekstu,
+- `DELETE /api/texts/{text_id}` - usuwanie tekstu.
 
 ## Uruchomienie w Dockerze
 
@@ -11,7 +35,7 @@ docker build -t km-praktyki .
 Uruchom kontener z mapowaniem portu aplikacji na hosta:
 
 ```bash
-docker run --rm -p 5173:5173 km-praktyki
+docker run --rm -p 5173:80 km-praktyki
 ```
 
 Aplikacja będzie dostępna pod adresem http://localhost:5173.

@@ -1,83 +1,88 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { textApi } from './api'
+import { PagePanel } from './components/PagePanel'
+import { TextForm } from './components/TextForm'
+import { TextList } from './components/TextList'
+import type { TextItem } from './types'
 import './App.css'
 
 function App() {
-  const [text, setText] = useState('')
-  const [texts, setTexts] = useState([
-    'Przykładowy tekst 2',
-    'Przykładowy tekst 3',
-  ])
+  const [texts, setTexts] = useState<TextItem[]>([])
   const [showList, setShowList] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  const submitText = () => {
-    const trimmedText = text.trim()
-
-    if (!trimmedText) {
+  useEffect(() => {
+    if (!showList) {
       return
     }
 
-    setTexts((currentTexts) => [...currentTexts, trimmedText])
-    setText('')
+    const loadTexts = async () => {
+      setIsLoading(true)
+      setError('')
+
+      try {
+        setTexts(await textApi.list())
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Nie udało się pobrać tekstów.')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadTexts()
+  }, [showList])
+
+  const submitText = async (content: string) => {
+    setIsLoading(true)
+    setError('')
+
+    try {
+      const createdText = await textApi.create(content)
+      setTexts((currentTexts) => [...currentTexts, createdText])
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Nie udało się zapisać tekstu.')
+      throw submitError
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handleTextKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submitText()
+  const removeText = async (id: number) => {
+    setIsLoading(true)
+    setError('')
+
+    try {
+      await textApi.remove(id)
+      setTexts((currentTexts) => currentTexts.filter((item) => item.id !== id))
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : 'Nie udało się usunąć tekstu.')
+    } finally {
+      setIsLoading(false)
     }
   }
 
   return (
     <main className="app-shell">
       {!showList ? (
-        <section className="page-panel home-panel" aria-labelledby="home-title">
-          <p className="eyebrow">Strona główna</p>
-          <h1 id="home-title">Dodaj tekst</h1>
-          <p className="intro">Wpisz wiadomość, którą chcesz zachować na liście.</p>
-          <textarea
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={handleTextKeyDown}
-            placeholder="Przykładowy tekst 1"
-            aria-label="Treść tekstu"
-            rows={3}
-          />
+        <PagePanel eyebrow="Strona główna" title="Dodaj tekst" className="home-panel">
+          <TextForm onSubmit={submitText} disabled={isLoading} />
+          {error && <p className="error-message" role="alert">{error}</p>}
           <div className="actions">
-            <button type="button" onClick={submitText}>
-              Wyślij
-            </button>
             <button type="button" className="secondary-button" onClick={() => setShowList(true)}>
               Lista
             </button>
           </div>
-        </section>
+        </PagePanel>
       ) : (
-        <section className="page-panel list-panel" aria-labelledby="list-title">
-          <p className="eyebrow">Podstrona listy</p>
-          <h1 id="list-title">Lista tekstów</h1>
-          <div className="text-list" aria-live="polite">
-            {texts.length > 0 ? (
-              texts.map((item, index) => (
-                <div className="text-item" key={`${item}-${index}`}>
-                  <span>{item}</span>
-                  <button
-                    type="button"
-                    className="remove-button"
-                    aria-label={`Usuń tekst: ${item}`}
-                    onClick={() => setTexts((currentTexts) => currentTexts.filter((_, itemIndex) => itemIndex !== index))}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))
-            ) : (
-              <p className="empty-list">Lista jest pusta.</p>
-            )}
-          </div>
+        <PagePanel eyebrow="Podstrona listy" title="Lista tekstów" className="list-panel">
+          {isLoading && <p className="status-message">Ładowanie...</p>}
+          <TextList items={texts} onRemove={removeText} disabled={isLoading} />
+          {error && <p className="error-message" role="alert">{error}</p>}
           <button type="button" className="back-button" onClick={() => setShowList(false)}>
             Wróć
           </button>
-        </section>
+        </PagePanel>
       )}
     </main>
   )

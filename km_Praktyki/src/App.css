@@ -46,6 +46,10 @@ h1 {
   font-size: 0.95rem;
 }
 
+.home-panel > button {
+  margin-top: 18px;
+}
+
 textarea {
   width: min(100%, 430px);
   min-height: 112px;
@@ -125,6 +129,17 @@ button:focus-visible {
   display: grid;
   gap: 12px;
   margin: 48px 0 30px;
+}
+
+.status-message,
+.error-message {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.error-message {
+  color: #a13d2e;
 }
 
 .text-item {
