@@ -18,13 +18,16 @@ steps:
       $(Build.BuildId)
 
 - powershell: |
-    docker stop km-praktyki-app 2>$null
-    docker rm km-praktyki-app 2>$null
+    docker ps -aq --filter "name=km-praktyki-app" | ForEach-Object {
+    docker stop $_
+    docker rm $_
+    }
 
     docker run -d `
       --name km-praktyki-app `
       -p 5173:80 `
       km-praktyki:$(Build.BuildId)
+    ``
   displayName: Run container
 
 - powershell: |
