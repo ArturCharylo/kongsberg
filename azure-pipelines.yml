@@ -35,33 +35,33 @@ steps:
 
 # Raporty Trivy (wykonują się zawsze)
 - script: |
-    trivy image --format json --output trivy-api-report.json km-praktyki-api:latest
+    C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-api-report.json km-praktyki-api:latest
   displayName: Generate API report
   condition: always()
 
 - script: |
-    trivy image --format json --output trivy-frontend-report.json km-praktyki-frontend:latest
+    C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-frontend-report.json km-praktyki-frontend:latest
   displayName: Generate Frontend report
   condition: always()
 
 - script: |
-    trivy fs --format json --output trivy-source-report.json .
+    C:\ProgramData\chocolatey\bin\trivy.exe fs --format json --output trivy-source-report.json .
   displayName: Generate Source Code report
   condition: always()
 
 # Scan API
 - script: |
-    trivy image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-api:latest
+    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-api:latest
   displayName: Scan API
 
 # Scan Frontend
 - script: |
-    trivy image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-frontend:latest
+    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-frontend:latest
   displayName: Scan Frontend
 
 # Scan zależności projektu
 - script: |
-    trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+    C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 1 .
   displayName: Scan Source Code Dependencies
 
 # Zebranie raportów do katalogu artefaktów
