@@ -15,6 +15,7 @@ steps:
       docker ps -aq --filter "publish=5173"
       docker ps -aq --filter "publish=8000"
       docker ps -aq --filter "publish=5432"
+      docker ps -aq --filter "publish=9090"
     ) | Where-Object { $_ } | Sort-Object -Unique
 
     if ($containers) {
