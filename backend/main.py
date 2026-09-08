@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from .database import Base, engine, get_db
 from .models import SavedText
@@ -26,10 +28,22 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
+Instrumentator().instrument(app).expose(app, include_in_schema=False)
+
 
 @app.get('/health')
-def health_check() -> dict[str, str]:
-    return {'status': 'ok'}
+def health(db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        db.execute(text('SELECT 1'))
+        return {
+            "status": "healthy",
+            "database": "healthy",
+        }
+    except Exception:
+        return {
+            "status": "unhealthy",
+            "database": "unhealthy",
+        }
 
 
 @app.get('/api/texts', response_model=list[TextResponse])

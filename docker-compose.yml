@@ -17,9 +17,16 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    ports:
+        - '8000:8000'
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/textsdb
       FRONTEND_ORIGIN: http://localhost:5173
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
     depends_on:
       db:
         condition: service_healthy
@@ -34,6 +41,19 @@ services:
     depends_on:
       api:
         condition: service_started
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    container_name: prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      api:
+        condition: service_healthy
+
 
 volumes:
   postgres_data:
