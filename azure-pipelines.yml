@@ -1,98 +1,157 @@
 trigger:
   - master
 
-pool:
-  name: Default
+stages:
 
-steps:
-- checkout: self
+# ==================================================
+# PREPARATION
+# ==================================================
+- stage: Preparation
+  displayName: Preparation
 
-# Zatrzymanie poprzedniego stacka
-- powershell: |
-    docker compose -p km-praktyki down --remove-orphans
+  jobs:
+  - job: Prepare
+    pool:
+      name: Default
 
-    $containers = @(
-      docker ps -aq --filter "publish=5173"
-      docker ps -aq --filter "publish=8000"
-      docker ps -aq --filter "publish=5432"
-      docker ps -aq --filter "publish=9090"
-      docker ps -aq --filter "publish=3000"
-    ) | Where-Object { $_ } | Sort-Object -Unique
+    steps:
+    - checkout: self
 
-    if ($containers) {
-      docker rm -f $containers
-    }
-  displayName: Stop previous application containers
+    - powershell: |
+        docker compose -p km-praktyki down --remove-orphans
 
-# Build obrazów
-- powershell: |
-    docker compose -p km-praktyki build --pull
+        $containers = @(
+          docker ps -aq --filter "publish=5173"
+          docker ps -aq --filter "publish=8000"
+          docker ps -aq --filter "publish=5432"
+          docker ps -aq --filter "publish=9090"
+          docker ps -aq --filter "publish=3000"
+        ) | Where-Object { $_ } | Sort-Object -Unique
 
-    if ($LASTEXITCODE -ne 0) {
-      exit $LASTEXITCODE
-    }
-  displayName: Build application stack
+        if ($containers) {
+          docker rm -f $containers
+        }
+      displayName: Stop previous application containers
 
-# Raporty Trivy (wykonują się zawsze)
-- script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-api-report.json km-praktyki-api:latest
-  displayName: Generate API report
-  condition: always()
+# ==================================================
+# BUILD
+# ==================================================
+- stage: Build
+  displayName: Build Application Stack
+  dependsOn: Preparation
 
-- script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-frontend-report.json km-praktyki-frontend:latest
-  displayName: Generate Frontend report
-  condition: always()
+  jobs:
+  - job: Build
+    pool:
+      name: Default
 
-- script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe fs --format json --output trivy-source-report.json .
-  displayName: Generate Source Code report
-  condition: always()
+    steps:
+    - powershell: |
+        docker compose -p km-praktyki build --pull
 
-# Scan API
-- script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-api:latest
-  displayName: Scan API
+        if ($LASTEXITCODE -ne 0) {
+          exit $LASTEXITCODE
+        }
+      displayName: Build application stack
 
-# Scan Frontend
-- script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-frontend:latest
-  displayName: Scan Frontend
+# ==================================================
+# SECURITY
+# ==================================================
+- stage: SecurityScan
+  displayName: Security Scan
+  dependsOn: Build
 
-# Scan zależności projektu
-- script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 0 .
-  displayName: Scan Source Code Dependencies
+  jobs:
+  - job: Scan
+    pool:
+      name: Default
 
-# Zebranie raportów do katalogu artefaktów
-- powershell: |
-    New-Item -ItemType Directory -Force -Path trivy-reports
+    steps:
 
-    Move-Item trivy-api-report.json trivy-reports
-    Move-Item trivy-frontend-report.json trivy-reports
-    Move-Item trivy-source-report.json trivy-reports
-  displayName: Collect Security Reports
-  condition: always()
+    # Raporty Trivy
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-api-report.json km-praktyki-api:latest
+      displayName: Generate API report
+      condition: always()
 
-# Publikacja raportów
-- task: PublishBuildArtifacts@1
-  displayName: Publish Security Reports
-  condition: always()
-  inputs:
-    pathToPublish: trivy-reports
-    artifactName: security-reports
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-frontend-report.json km-praktyki-frontend:latest
+      displayName: Generate Frontend report
+      condition: always()
 
-# Uruchomienie stacka tylko gdy skany przeszły
-- powershell: |
-    docker compose -p km-praktyki up -d
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe fs --format json --output trivy-source-report.json .
+      displayName: Generate Source Code report
+      condition: always()
 
-    if ($LASTEXITCODE -ne 0) {
-      exit $LASTEXITCODE
-    }
-  displayName: Run application stack
+    # Scan API
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-api:latest
+      displayName: Scan API
 
-# Diagnostyka
-- powershell: |
-    docker images
-    docker ps -a
+    # Scan Frontend
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-frontend:latest
+      displayName: Scan Frontend
+
+    # Scan Source
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 0 .
+      displayName: Scan Source Code Dependencies
+
+    # Collect reports
+    - powershell: |
+        New-Item -ItemType Directory -Force -Path trivy-reports
+
+        Move-Item trivy-api-report.json trivy-reports
+        Move-Item trivy-frontend-report.json trivy-reports
+        Move-Item trivy-source-report.json trivy-reports
+      displayName: Collect Security Reports
+      condition: always()
+
+    # Publish reports
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Security Reports
+      condition: always()
+      inputs:
+        pathToPublish: trivy-reports
+        artifactName: security-reports
+
+# ==================================================
+# DEPLOY
+# ==================================================
+- stage: Deploy
+  displayName: Deploy Application
+  dependsOn: SecurityScan
+
+  jobs:
+  - job: Deploy
+    pool:
+      name: Default
+
+    steps:
+    - powershell: |
+        docker compose -p km-praktyki up -d
+
+        if ($LASTEXITCODE -ne 0) {
+          exit $LASTEXITCODE
+        }
+      displayName: Run application stack
+
+# ==================================================
+# DIAGNOSTICS
+# ==================================================
+- stage: Diagnostics
   displayName: Diagnostics
+  dependsOn: Deploy
+
+  jobs:
+  - job: Diagnostics
+    pool:
+      name: Default
+
+    steps:
+    - powershell: |
+        docker images
+        docker ps -a
+      displayName: Diagnostics
