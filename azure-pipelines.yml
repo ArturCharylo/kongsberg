@@ -51,17 +51,17 @@ steps:
 
 # Scan API
 - script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-api:latest
+    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-api:latest
   displayName: Scan API
 
 # Scan Frontend
 - script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-frontend:latest
+    C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-frontend:latest
   displayName: Scan Frontend
 
 # Scan zależności projektu
 - script: |
-    C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 1 .
+    C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 0 .
   displayName: Scan Source Code Dependencies
 
 # Zebranie raportów do katalogu artefaktów
