@@ -7,11 +7,11 @@ pool:
 steps:
 - checkout: self
 
+# Zatrzymanie poprzedniego stacka
 - powershell: |
     docker compose -p km-praktyki down --remove-orphans
 
     $containers = @(
-      docker ps -aq --filter "name=km-praktyki-app"
       docker ps -aq --filter "publish=5173"
       docker ps -aq --filter "publish=8000"
       docker ps -aq --filter "publish=5432"
@@ -24,18 +24,74 @@ steps:
     }
   displayName: Stop previous application containers
 
+# Build obrazów
 - powershell: |
     docker compose -p km-praktyki build --pull
+
     if ($LASTEXITCODE -ne 0) {
       exit $LASTEXITCODE
     }
+  displayName: Build application stack
 
+# Raporty Trivy (wykonują się zawsze)
+- script: |
+    trivy image --format json --output trivy-api-report.json km-praktyki-api:latest
+  displayName: Generate API report
+  condition: always()
+
+- script: |
+    trivy image --format json --output trivy-frontend-report.json km-praktyki-frontend:latest
+  displayName: Generate Frontend report
+  condition: always()
+
+- script: |
+    trivy fs --format json --output trivy-source-report.json .
+  displayName: Generate Source Code report
+  condition: always()
+
+# Scan API
+- script: |
+    trivy image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-api:latest
+  displayName: Scan API
+
+# Scan Frontend
+- script: |
+    trivy image --severity HIGH,CRITICAL --exit-code 1 km-praktyki-frontend:latest
+  displayName: Scan Frontend
+
+# Scan zależności projektu
+- script: |
+    trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+  displayName: Scan Source Code Dependencies
+
+# Zebranie raportów do katalogu artefaktów
+- powershell: |
+    New-Item -ItemType Directory -Force -Path trivy-reports
+
+    Move-Item trivy-api-report.json trivy-reports
+    Move-Item trivy-frontend-report.json trivy-reports
+    Move-Item trivy-source-report.json trivy-reports
+  displayName: Collect Security Reports
+  condition: always()
+
+# Publikacja raportów
+- task: PublishBuildArtifacts@1
+  displayName: Publish Security Reports
+  condition: always()
+  inputs:
+    pathToPublish: trivy-reports
+    artifactName: security-reports
+
+# Uruchomienie stacka tylko gdy skany przeszły
+- powershell: |
     docker compose -p km-praktyki up -d
+
     if ($LASTEXITCODE -ne 0) {
       exit $LASTEXITCODE
     }
-  displayName: Build and run application stack
+  displayName: Run application stack
 
+# Diagnostyka
 - powershell: |
     docker images
     docker ps -a
