@@ -42,6 +42,11 @@ services:
       api:
         condition: service_started
 
+  pushgateway:
+    image: prom/pushgateway
+    ports:
+      - "9091:9091"
+
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
