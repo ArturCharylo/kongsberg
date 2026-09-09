@@ -181,9 +181,11 @@ stages:
             $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
         }
 
-        [System.IO.File]::WriteAllLines(
+        $content = ($allMetrics -join "`n") + "`n"
+
+        [System.IO.File]::WriteAllText(
             $metricsFile,
-            $allMetrics,
+            $content,
             [System.Text.UTF8Encoding]::new($false)
         )
 
@@ -258,7 +260,7 @@ stages:
         Invoke-WebRequest `
           -Uri "http://localhost:9091/metrics/job/trivy-scan" `
           -Method POST `
-          -InFile $metricsFile
+          -InFile $metricsFile `
           -ContentType "text/plain"
       displayName: Push Metrics To Pushgateway
 
