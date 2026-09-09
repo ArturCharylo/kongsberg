@@ -181,13 +181,6 @@ stages:
         }
 
       displayName: Generate Prometheus Metrics
-      
-    - powershell: |
-        Invoke-WebRequest `
-          -Uri http://localhost:9091/metrics/job/trivy-scan `
-          -Method POST `
-          -InFile trivy-metrics.prom
-      displayName: Push Metrics To Pushgateway
 
         # Collect reports
     - powershell: |
@@ -227,6 +220,13 @@ stages:
           exit $LASTEXITCODE
         }
       displayName: Run application stack
+      
+    - powershell: |
+        Invoke-WebRequest `
+          -Uri http://localhost:9091/metrics/job/trivy-scan `
+          -Method POST `
+          -InFile trivy-metrics.prom
+      displayName: Push Metrics To Pushgateway
 
 # ==================================================
 # PUSH TO DEV
