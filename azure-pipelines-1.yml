@@ -1,0 +1,10 @@
+trigger: none
+
+pool:
+  name: Default
+
+steps:
+- powershell: |
+    Write-Host "=== Running containers ==="
+    docker ps -a
+  displayName: "List containers"
