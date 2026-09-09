@@ -174,10 +174,13 @@ stages:
                 }
             }
 
-            Add-Content $metricsFile "trivy_vulnerabilities_total{image=`"$image`",severity=`"critical`"} $critical"
-            Add-Content $metricsFile "trivy_vulnerabilities_total{image=`"$image`",severity=`"high`"} $high"
-            Add-Content $metricsFile "trivy_vulnerabilities_total{image=`"$image`",severity=`"medium`"} $medium"
-            Add-Content $metricsFile "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
+            $metrics = @()
+            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"critical`"} $critical"
+            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"high`"} $high"
+            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"medium`"} $medium"
+            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
+
+            $metrics | Set-Content $metricsFile -Encoding utf8
         }
 
         if (Test-Path trivy-metrics.prom)
