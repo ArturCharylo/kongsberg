@@ -180,7 +180,21 @@ stages:
             Add-Content $metricsFile "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
         }
 
+        if (Test-Path trivy-metrics.prom)
+        {
+            Get-Content trivy-metrics.prom
+        }
+        else
+        {
+            Write-Error "Metrics file was not created!"
+        }
+
       displayName: Generate Prometheus Metrics
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: trivy-metrics.prom
+        artifactName: trivy-metrics
 
         # Collect reports
     - powershell: |
@@ -220,7 +234,11 @@ stages:
           exit $LASTEXITCODE
         }
       displayName: Run application stack
-      
+
+    - task: DownloadBuildArtifacts@0
+      inputs:
+        artifactName: trivy-metrics
+
     - powershell: |
         Invoke-WebRequest `
           -Uri http://localhost:9091/metrics/job/trivy-scan `
