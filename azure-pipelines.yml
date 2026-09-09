@@ -249,6 +249,70 @@ stages:
 - stage: PushProd
   displayName: Push Images to PROD
   condition: and(succeeded(), eq(dependencies.SecurityScan.outputs['TrivyCheck.HasCritical'], 'false'))
+  dependsOn: PushDev
+  jobs:
+  - job: PushProd
+    pool:
+      name: Default
+
+    steps:
+
+    - powershell: |
+        docker tag km-praktyki-api:latest knsberg.azurecr.io/praktyki-api:$(Build.BuildId)
+
+        docker tag km-praktyki-frontend:latest knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)
+
+        docker tag grafana/grafana-enterprise:latest knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)
+
+        docker tag postgres:16-alpine knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)
+
+        docker tag prom/prometheus:latest knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)
+      displayName: Tag images for PROD
+
+    - task: Docker@2
+      displayName: Push API PROD
+      inputs:
+        command: push
+        containerRegistry: prod
+        repository: praktyki-api
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Frontend PROD
+      inputs:
+        command: push
+        containerRegistry: prod
+        repository: praktyki-frontend
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push DB PROD
+      inputs:
+        command: push
+        containerRegistry: prod
+        repository: praktyki-postgres
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Prometheus PROD
+      inputs:
+        command: push
+        containerRegistry: prod
+        repository: praktyki-prom
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Grafana PROD
+      inputs:
+        command: push
+        containerRegistry: prod
+        repository: praktyki-grafana
+        tags: |
+          $(Build.BuildId)
 
 # ==================================================
 # DIAGNOSTICS
