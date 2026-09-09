@@ -151,6 +151,7 @@ stages:
             "source" = "trivy-source-report.json"
         }
 
+        $allMetrics = @()
         foreach ($image in $reports.Keys)
         {
             $json = Get-Content $reports[$image] -Raw | ConvertFrom-Json
@@ -174,14 +175,17 @@ stages:
                 }
             }
 
-            $metrics = @()
-            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"critical`"} $critical"
-            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"high`"} $high"
-            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"medium`"} $medium"
-            $metrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
-
-            $metrics | Set-Content $metricsFile -Encoding utf8
+            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"critical`"} $critical"
+            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"high`"} $high"
+            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"medium`"} $medium"
+            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
         }
+
+        [System.IO.File]::WriteAllLines(
+            $metricsFile,
+            $allMetrics,
+            [System.Text.UTF8Encoding]::new($false)
+        )
 
         if (Test-Path trivy-metrics.prom)
         {
@@ -249,10 +253,13 @@ stages:
         Test-Path $metricsFile
         Get-Content $metricsFile
 
+        Format-Hex $metricsFile | Select-Object -First 5
+
         Invoke-WebRequest `
           -Uri "http://localhost:9091/metrics/job/trivy-scan" `
           -Method POST `
           -InFile $metricsFile
+          -ContentType "text/plain"
       displayName: Push Metrics To Pushgateway
 
 # ==================================================
