@@ -99,6 +99,38 @@ stages:
         C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 0 .
       displayName: Scan Source Code Dependencies
 
+    - powershell: |
+        $hasCritical = $false
+
+        C:\ProgramData\chocolatey\bin\trivy.exe image `
+          --severity CRITICAL `
+          --exit-code 1 `
+          km-praktyki-api:latest
+
+        if ($LASTEXITCODE -eq 1) {
+          $hasCritical = $true
+        }
+
+        C:\ProgramData\chocolatey\bin\trivy.exe image `
+          --severity CRITICAL `
+          --exit-code 1 `
+          km-praktyki-frontend:latest
+
+        if ($LASTEXITCODE -eq 1) {
+          $hasCritical = $true
+        }
+
+        if ($hasCritical) {
+          Write-Host "##vso[task.logissue type=warning]Critical vulnerabilities detected"
+        }
+
+        Write-Host "##vso[task.setvariable variable=HasCritical;isOutput=true]$hasCritical"
+
+        exit 0
+
+      name: TrivyCheck
+      displayName: Detect Critical Vulnerabilities
+
     # Collect reports
     - powershell: |
         New-Item -ItemType Directory -Force -Path trivy-reports
@@ -209,6 +241,14 @@ stages:
         repository: praktyki-grafana
         tags: |
           $(Build.BuildId)
+
+# ==================================================
+# PUSH TO DEV
+# ==================================================
+
+- stage: PushProd
+  displayName: Push Images to PROD
+  condition: and(succeeded(), eq(dependencies.SecurityScan.outputs['TrivyCheck.HasCritical'], 'false'))
 
 # ==================================================
 # DIAGNOSTICS
