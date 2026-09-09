@@ -183,6 +183,7 @@ stages:
         if (Test-Path trivy-metrics.prom)
         {
             Get-Content trivy-metrics.prom
+            Get-ChildItem -Recurse $(Pipeline.Workspace)
         }
         else
         {
@@ -240,10 +241,12 @@ stages:
         artifactName: trivy-metrics
 
     - powershell: |
+        $metricsFile = "$(Pipeline.Workspace)\trivy-metrics\trivy-metrics.prom"
+
         Invoke-WebRequest `
           -Uri http://localhost:9091/metrics/job/trivy-scan `
           -Method POST `
-          -InFile trivy-metrics.prom
+          -InFile $metricsFile `
       displayName: Push Metrics To Pushgateway
 
 # ==================================================
