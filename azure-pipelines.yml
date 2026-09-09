@@ -139,6 +139,78 @@ stages:
       displayName: Run application stack
 
 # ==================================================
+# PUSH TO DEV
+# ==================================================
+
+- stage: PushDev
+  displayName: Push Images To DEV
+  dependsOn: Deploy
+
+  jobs:
+  - job: Push
+    pool:
+      name: Default
+
+    steps:
+
+    - powershell: |
+        docker tag km-praktyki-api:latest knsberg.azurecr.io/praktyki-api:$(Build.BuildId)
+
+        docker tag km-praktyki-frontend:latest knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)
+
+        docker tag grafana/grafana-enterprise:latest knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)
+
+        docker tag postgres:16-alpine knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)
+
+        docker tag prom/prometheus:latest knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)
+      displayName: Tag images for DEV
+
+    - task: Docker@2
+      displayName: Push API DEV
+      inputs:
+        command: push
+        containerRegistry: dev
+        repository: praktyki-api
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Frontend DEV
+      inputs:
+        command: push
+        containerRegistry: dev
+        repository: praktyki-frontend
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push DB DEV
+      inputs:
+        command: push
+        containerRegistry: dev
+        repository: praktyki-postgres
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Prometheus DEV
+      inputs:
+        command: push
+        containerRegistry: dev
+        repository: praktyki-prom
+        tags: |
+          $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Grafana DEV
+      inputs:
+        command: push
+        containerRegistry: dev
+        repository: praktyki-grafana
+        tags: |
+          $(Build.BuildId)
+
+# ==================================================
 # DIAGNOSTICS
 # ==================================================
 - stage: Diagnostics
