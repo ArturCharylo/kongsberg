@@ -253,15 +253,15 @@ stages:
         $metricsFile = "$(System.ArtifactsDirectory)\trivy-metrics\trivy-metrics.prom"
 
         Test-Path $metricsFile
-        Get-Content $metricsFile
+        $content = Get-Content $metricsFile -Raw
 
-        Format-Hex $metricsFile | Select-Object -First 5
-
-        Invoke-WebRequest `
-          -Uri "http://localhost:9091/metrics/job/trivy-scan" `
-          -Method POST `
-          -InFile $metricsFile `
-          -ContentType "text/plain"
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("Content-Type","text/plain")
+        $wc.UploadString(
+            "http://localhost:9091/metrics/job/trivy-scan",
+            "POST",
+            $content
+        )
       displayName: Push Metrics To Pushgateway
 
 # ==================================================
