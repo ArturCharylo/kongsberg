@@ -46,6 +46,12 @@ stages:
       name: Default
 
     steps:
+    - task: AzureKeyVault@2
+      inputs:
+        azureSubscription: 'key-vault'
+        KeyVaultName: 'kongsberg'
+        SecretsFilter: 'delivery'
+        RunAsPreJob: true
     - powershell: |
         docker compose -p km-praktyki build --pull
 
