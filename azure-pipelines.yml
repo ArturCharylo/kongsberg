@@ -46,61 +46,96 @@ stages:
       name: Default
 
     steps:
+
     - task: AzureKeyVault@2
+      displayName: Download certificate from Key Vault
       inputs:
         azureSubscription: 'key-vault'
         KeyVaultName: 'kongsberg'
-        SecretsFilter: 'delivery,deliveryPass'
+        SecretsFilter: 'delivery'
         RunAsPreJob: true
 
     - powershell: |
         $secret = "$(delivery)"
+
         Write-Host "Length: $($secret.Length)"
-        $secret = "$(delivery)"
-        Write-Host $secret.Substring(0,20)
+
+        if ($secret.Length -gt 20)
+        {
+          Write-Host "Prefix:"
+          Write-Host $secret.Substring(0,20)
+        }
+      displayName: Inspect secret
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-        New-Item -ItemType Directory -Force $certDir
+
+        New-Item -ItemType Directory -Force -Path $certDir
 
         [System.IO.File]::WriteAllBytes(
           "$certDir\delivery.pfx",
           [System.Convert]::FromBase64String("$(delivery)")
         )
+
+        Get-ChildItem $certDir
       displayName: Save PFX
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+
         openssl pkcs12 `
           -in "$certDir\delivery.pfx" `
           -clcerts `
           -nokeys `
           -out "$certDir\delivery.crt" `
-          -passin "pass:$(deliveryPass)"
+          -passin pass:
+
+        if ($LASTEXITCODE -ne 0)
+        {
+          throw "CRT extraction failed"
+        }
       displayName: Extract CRT
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+
         openssl pkcs12 `
           -in "$certDir\delivery.pfx" `
           -nocerts `
           -nodes `
           -out "$certDir\delivery.key" `
-          -passin "pass:$(deliveryPass)"
-      displayName: Extract Key
+          -passin pass:
+
+        if ($LASTEXITCODE -ne 0)
+        {
+          throw "KEY extraction failed"
+        }
+      displayName: Extract KEY
 
     - powershell: |
-        Get-ChildItem "$(Build.SourcesDirectory)\km_Praktyki\certs"
-      displayName: Verify certificate files
+        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+
+        Write-Host "Certificate directory contents:"
+        Get-ChildItem $certDir
+
+        Test-Path "$certDir\delivery.crt"
+        Test-Path "$certDir\delivery.key"
+
+        openssl x509 `
+          -in "$certDir\delivery.crt" `
+          -noout `
+          -subject
+      displayName: Verify certificate
 
     - powershell: |
         docker compose -p km-praktyki build --pull
 
-        if ($LASTEXITCODE -ne 0) {
+        if ($LASTEXITCODE -ne 0)
+        {
           exit $LASTEXITCODE
         }
       displayName: Build application stack
-
+      
 # ==================================================
 # SECURITY
 # ==================================================
