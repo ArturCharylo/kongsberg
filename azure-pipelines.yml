@@ -81,19 +81,23 @@ stages:
       displayName: Save PFX
 
     - powershell: |
+        where.exe openssl
+      displayName: Find OpenSSL
+
+    - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
 
-        openssl pkcs12 `
-          -in "$certDir\delivery.pfx" `
-          -clcerts `
-          -nokeys `
-          -out "$certDir\delivery.crt" `
-          -passin pass:
+        $pfxFile = "$certDir\delivery.pfx"
 
-        if ($LASTEXITCODE -ne 0)
-        {
-          throw "CRT extraction failed"
-        }
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxFile)
+
+        $pem = @"
+        -----BEGIN CERTIFICATE-----
+        $([Convert]::ToBase64String($cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::CertLineBreaks'))
+        -----END CERTIFICATE-----
+        "@
+
+            Set-Content "$certDir\delivery.crt" $pem
       displayName: Extract CRT
 
     - powershell: |
@@ -135,7 +139,7 @@ stages:
           exit $LASTEXITCODE
         }
       displayName: Build application stack
-      
+
 # ==================================================
 # SECURITY
 # ==================================================
