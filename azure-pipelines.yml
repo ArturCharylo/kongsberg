@@ -50,8 +50,49 @@ stages:
       inputs:
         azureSubscription: 'key-vault'
         KeyVaultName: 'kongsberg'
-        SecretsFilter: 'delivery'
+        SecretsFilter: 'delivery,deliveryPass'
         RunAsPreJob: true
+
+    - powershell: |
+        $secret = "$(delivery)"
+        Write-Host "Length: $($secret.Length)"
+        $secret = "$(delivery)"
+        Write-Host $secret.Substring(0,20)
+
+    - powershell: |
+        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        New-Item -ItemType Directory -Force $certDir
+
+        [System.IO.File]::WriteAllBytes(
+          "$certDir\delivery.pfx",
+          [System.Convert]::FromBase64String("$(delivery)")
+        )
+      displayName: Save PFX
+
+    - powershell: |
+        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        openssl pkcs12 `
+          -in "$certDir\delivery.pfx" `
+          -clcerts `
+          -nokeys `
+          -out "$certDir\delivery.crt" `
+          -passin "pass:$(deliveryPass)"
+      displayName: Extract CRT
+
+    - powershell: |
+        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        openssl pkcs12 `
+          -in "$certDir\delivery.pfx" `
+          -nocerts `
+          -nodes `
+          -out "$certDir\delivery.key" `
+          -passin "pass:$(deliveryPass)"
+      displayName: Extract Key
+
+    - powershell: |
+        Get-ChildItem "$(Build.SourcesDirectory)\km_Praktyki\certs"
+      displayName: Verify certificate files
+
     - powershell: |
         docker compose -p km-praktyki build --pull
 
