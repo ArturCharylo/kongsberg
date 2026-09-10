@@ -81,19 +81,36 @@ stages:
       displayName: Save PFX
 
     - powershell: |
-        where.exe openssl
+        $openssl = "C:\Program Files\OpenSSL-Win64\bin\openssl.exe"
+
+        if (Test-Path $openssl)
+        {
+            Write-Host "OpenSSL found"
+        }
+        else
+        {
+            Write-Host "OpenSSL NOT found"
+        }
       displayName: Find OpenSSL
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-
         $pfxFile = "$certDir\delivery.pfx"
 
         $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxFile)
 
+        $certBytes = $cert.Export(
+          [System.Security.Cryptography.X509Certificates.X509ContentType]::Cert
+        )
+
+        $base64 = [System.Convert]::ToBase64String(
+          $certBytes,
+          [System.Base64FormattingOptions]::InsertLineBreaks
+        )
+
         $pem = @"
         -----BEGIN CERTIFICATE-----
-        $([Convert]::ToBase64String($cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::CertLineBreaks'))
+        $base64
         -----END CERTIFICATE-----
         "@
 
