@@ -84,20 +84,21 @@ stages:
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        $pass = "$(deliveryPass)"
 
         openssl pkcs12 `
           -in "$certDir\delivery.pfx" `
           -clcerts `
           -nokeys `
           -out "$certDir\delivery.crt" `
-          -passin pass: 123
+          -passin "pass:$pass"
 
         openssl pkcs12 `
           -in "$certDir\delivery.pfx" `
           -cacerts `
           -nokeys `
           -out "$certDir\Artur.crt" `
-          -passin pass: 123
+          -passin "pass:$pass"
 
         Get-Content `
           "$certDir\delivery.crt",
