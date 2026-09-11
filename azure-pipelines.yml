@@ -119,6 +119,17 @@ stages:
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        openssl s_client -connect localhost:5173 -showcerts
+
+        Copy-Item `
+          "$certDir\delivery.crt" `
+          "$certDir\fullchain.crt"
+
+        Get-ChildItem $certDir
+      displayName: Create Fullchain
+
+    - powershell: |
+        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
 
         openssl pkcs12 `
           -in "$certDir\delivery.pfx" `
