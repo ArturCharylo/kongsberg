@@ -84,27 +84,26 @@ stages:
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-        $pfxFile = "$certDir\delivery.pfx"
 
-        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxFile)
+        openssl pkcs12 `
+          -in "$certDir\delivery.pfx" `
+          -clcerts `
+          -nokeys `
+          -out "$certDir\delivery.crt" `
+          -passin pass: 123
 
-        $certBytes = $cert.Export(
-          [System.Security.Cryptography.X509Certificates.X509ContentType]::Cert
-        )
+        openssl pkcs12 `
+          -in "$certDir\delivery.pfx" `
+          -cacerts `
+          -nokeys `
+          -out "$certDir\Artur.crt" `
+          -passin pass: 123
 
-        $base64 = [System.Convert]::ToBase64String(
-          $certBytes,
-          [System.Base64FormattingOptions]::InsertLineBreaks
-        )
-
-        $pem = @"
-        -----BEGIN CERTIFICATE-----
-        $base64
-        -----END CERTIFICATE-----
-        "@
-
-          Set-Content "$certDir\delivery.crt" $pem
-      displayName: Extract CRT
+        Get-Content `
+          "$certDir\delivery.crt",
+          "$certDir\Artur.crt" |
+        Set-Content "$certDir\fullchain.crt"
+      displayName: Extract Full Chain
 
     - powershell: |
         dir "$(Build.SourcesDirectory)\km_Praktyki\certs"
