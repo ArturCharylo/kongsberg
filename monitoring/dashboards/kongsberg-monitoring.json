@@ -50,6 +50,72 @@
       ]
     },
     {
+      "id": 7,
+      "type": "table",
+      "title": "SBOM components",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sbom_component_info",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "job": true,
+              "instance": true
+            },
+            "indexByName": {
+              "image": 0,
+              "package": 1,
+              "version": 2
+            },
+            "renameByName": {
+              "image": "Image",
+              "package": "Package",
+              "version": "Version"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "API SBOM components",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sbom_components_total{image=\"api\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Frontend SBOM components",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sbom_components_total{image=\"frontend\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
       "id": 4,
       "type": "timeseries",
       "title": "Container CPU usage",

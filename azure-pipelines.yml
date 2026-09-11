@@ -178,6 +178,17 @@ stages:
       displayName: Generate Frontend report
       condition: always()
 
+    # SBOM dla obrazow aplikacyjnych
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe image --format cyclonedx --output sbom-api.json km-praktyki-api:latest
+      displayName: Generate API SBOM
+      condition: always()
+
+    - script: |
+        C:\ProgramData\chocolatey\bin\trivy.exe image --format cyclonedx --output sbom-frontend.json km-praktyki-frontend:latest
+      displayName: Generate Frontend SBOM
+      condition: always()
+
     - script: |
         C:\ProgramData\chocolatey\bin\trivy.exe fs --format json --output trivy-source-report.json .
       displayName: Generate Source Code report
@@ -323,6 +334,72 @@ stages:
         pathToPublish: trivy-reports
         artifactName: security-reports
 
+    - powershell: |
+        New-Item -ItemType Directory -Force -Path sbom-reports
+
+        Move-Item sbom-api.json sbom-reports
+        Move-Item sbom-frontend.json sbom-reports
+      displayName: Collect SBOM Reports
+      condition: always()
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish SBOM Reports
+      condition: always()
+      inputs:
+        pathToPublish: sbom-reports
+        artifactName: sbom-reports
+
+    - powershell: |
+        function Escape-PrometheusLabel {
+            param([AllowNull()][string]$Value)
+
+            if ($null -eq $Value) {
+                return ""
+            }
+
+            return $Value.Replace('\', '\\').Replace('"', '\"').Replace("`r", '\r').Replace("`n", '\n')
+        }
+
+        $sboms = @{
+            "api" = "sbom-reports\sbom-api.json"
+            "frontend" = "sbom-reports\sbom-frontend.json"
+        }
+
+        $metrics = @()
+        foreach ($image in $sboms.Keys) {
+            $sbom = Get-Content $sboms[$image] -Raw | ConvertFrom-Json
+            $components = @($sbom.components)
+
+            foreach ($component in $components) {
+                $package = Escape-PrometheusLabel $component.name
+                $version = Escape-PrometheusLabel $component.version
+                $escapedImage = Escape-PrometheusLabel $image
+                $metrics += 'sbom_component_info{image="' + $escapedImage + '",package="' + $package + '",version="' + $version + '"} 1'
+            }
+
+            $escapedImage = Escape-PrometheusLabel $image
+            $componentCount = $components.Count
+            $metrics += 'sbom_components_total{image="' + $escapedImage + '"} ' + $componentCount
+        }
+
+        $content = ($metrics -join "`n") + "`n"
+        [System.IO.File]::WriteAllText(
+            "sbom-metrics.prom",
+            $content,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        Get-Content sbom-metrics.prom -Head 20
+      displayName: Generate SBOM Prometheus Metrics
+      condition: always()
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish SBOM Metrics
+      condition: always()
+      inputs:
+        pathToPublish: sbom-metrics.prom
+        artifactName: sbom-metrics
+
     - task: PublishBuildArtifacts@1
       displayName: Publish Grafana Monitoring Configuration
       condition: succeededOrFailed()
@@ -347,6 +424,11 @@ stages:
       displayName: Download Grafana Monitoring Configuration
       inputs:
         artifactName: grafana-monitoring
+
+    - task: DownloadBuildArtifacts@0
+      displayName: Download SBOM Metrics
+      inputs:
+        artifactName: sbom-metrics
 
     - powershell: |
         $monitoringSource = "$(System.ArtifactsDirectory)\grafana-monitoring"
@@ -384,6 +466,21 @@ stages:
             $content
         )
       displayName: Push Metrics To Pushgateway
+
+    - powershell: |
+        $metricsFile = "$(System.ArtifactsDirectory)\sbom-metrics\sbom-metrics.prom"
+
+        Test-Path $metricsFile
+        $content = Get-Content $metricsFile -Raw
+
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("Content-Type", "text/plain")
+        $wc.UploadString(
+            "http://localhost:9091/metrics/job/sbom-scan",
+            "POST",
+            $content
+        )
+      displayName: Push SBOM Metrics To Pushgateway
 
 # ==================================================
 # PUSH TO DEV
