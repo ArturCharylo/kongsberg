@@ -104,7 +104,7 @@ stages:
           Set-Content "$certDir\delivery.crt" $pem
       displayName: Extract CRT
 
-      - powershell: |
+    - powershell: |
         dir "$(Build.SourcesDirectory)\km_Praktyki\certs"
         Get-Content "$(Build.SourcesDirectory)\km_Praktyki\certs\delivery.crt" -Head 5
       displayName: Check certs
