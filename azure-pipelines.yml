@@ -1,6 +1,9 @@
 trigger:
   - master
 
+variableGroups:
+  - name: km
+
 stages:
 
 # ==================================================
