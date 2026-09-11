@@ -81,17 +81,9 @@ stages:
       displayName: Save PFX
 
     - powershell: |
-        $openssl = "C:\Program Files\OpenSSL-Win64\bin\openssl.exe"
-
-        if (Test-Path $openssl)
-        {
-            Write-Host "OpenSSL found"
-        }
-        else
-        {
-            Write-Host "OpenSSL NOT found"
-        }
-      displayName: Find OpenSSL
+        dir "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        Get-Content "$(Build.SourcesDirectory)\km_Praktyki\certs\fullchain.crt" -Head 5
+      displayName: Check certs
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
@@ -114,19 +106,11 @@ stages:
         -----END CERTIFICATE-----
         "@
 
-            Set-Content "$certDir\delivery.crt" $pem
+          Set-Content "$certDir\delivery.crt" $pem
+          Get-Content "$certDir\delivery.crt",
+          "$certDir\Artur.cer" |
+          Set-Content "$certDir\fullchain.crt"
       displayName: Extract CRT
-
-    - powershell: |
-        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-        openssl s_client -connect localhost:5173 -showcerts
-
-        Copy-Item `
-          "$certDir\delivery.crt" `
-          "$certDir\fullchain.crt"
-
-        Get-ChildItem $certDir
-      displayName: Create Fullchain
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
