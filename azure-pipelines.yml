@@ -26,6 +26,8 @@ stages:
           docker ps -aq --filter "publish=5432"
           docker ps -aq --filter "publish=9090"
           docker ps -aq --filter "publish=3000"
+          docker ps -aq --filter "publish=8080"
+          docker ps -aq --filter "publish=9091"
         ) | Where-Object { $_ } | Sort-Object -Unique
 
         if ($containers) {
@@ -338,6 +340,8 @@ stages:
         if ($LASTEXITCODE -ne 0) {
           exit $LASTEXITCODE
         }
+
+        openssl s_client -connect localhost:5173 -showcerts
       displayName: Run application stack
 
     - task: DownloadBuildArtifacts@0
