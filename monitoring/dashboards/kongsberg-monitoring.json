@@ -1,0 +1,120 @@
+{
+  "uid": "kongsberg-monitoring",
+  "title": "Kongsberg Security and Containers",
+  "tags": ["trivy", "security", "cadvisor"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(container_cpu_usage_seconds_total{container!=\"\",image!=\"\"},container)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Vulnerabilities by image and severity",
+      "description": "Counts generated from the Trivy JSON reports in the security stage.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trivy_vulnerabilities_total",
+          "legendFormat": "{{image}} - {{severity}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Critical vulnerabilities",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(trivy_vulnerabilities_total{severity=\"critical\"})", "instant": true, "range": false }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "High vulnerabilities",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(trivy_vulnerabilities_total{severity=\"high\"})", "instant": true, "range": false }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Container CPU usage",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name, container) (rate(container_cpu_usage_seconds_total{container=~\"$container\",container!=\"\",image!=\"\"}[5m])) * 100",
+          "legendFormat": "{{name}}{{container}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Container memory usage",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_memory_usage_bytes{container=~\"$container\",container!=\"\",image!=\"\"}",
+          "legendFormat": "{{name}}{{container}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Container CPU throttling",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name, container) (rate(container_cpu_cfs_throttled_seconds_total{container=~\"$container\",container!=\"\",image!=\"\"}[5m]))",
+          "legendFormat": "{{name}}{{container}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}

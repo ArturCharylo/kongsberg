@@ -71,7 +71,8 @@ services:
       - '3000:3000'
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/dashboards/provider.yml:/etc/grafana/provisioning/dashboards/provider.yml:ro
       - ./monitoring/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus

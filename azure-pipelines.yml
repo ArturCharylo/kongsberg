@@ -323,6 +323,13 @@ stages:
         pathToPublish: trivy-reports
         artifactName: security-reports
 
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Grafana Monitoring Configuration
+      condition: succeededOrFailed()
+      inputs:
+        pathToPublish: monitoring
+        artifactName: grafana-monitoring
+
 # ==================================================
 # DEPLOY
 # ==================================================
@@ -336,6 +343,19 @@ stages:
       name: Default
 
     steps:
+    - task: DownloadBuildArtifacts@0
+      displayName: Download Grafana Monitoring Configuration
+      inputs:
+        artifactName: grafana-monitoring
+
+    - powershell: |
+        $monitoringSource = "$(System.ArtifactsDirectory)\grafana-monitoring"
+        $monitoringTarget = "$(Build.SourcesDirectory)\monitoring"
+
+        Copy-Item "$monitoringSource\*" $monitoringTarget -Recurse -Force
+        Get-ChildItem $monitoringTarget -Recurse
+      displayName: Install Grafana Monitoring Configuration
+
     - powershell: |
         docker compose -p km-praktyki up -d
 
