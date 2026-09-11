@@ -9,7 +9,7 @@
   "panels": [
     {
       "id": 1,
-      "type": "timeseries",
+      "type": "Stat",
       "title": "Vulnerabilities by image and severity",
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
