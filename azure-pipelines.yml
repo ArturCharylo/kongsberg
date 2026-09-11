@@ -81,11 +81,6 @@ stages:
       displayName: Save PFX
 
     - powershell: |
-        dir "$(Build.SourcesDirectory)\km_Praktyki\certs"
-        Get-Content "$(Build.SourcesDirectory)\km_Praktyki\certs\fullchain.crt" -Head 5
-      displayName: Check certs
-
-    - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
         $pfxFile = "$certDir\delivery.pfx"
 
@@ -107,10 +102,12 @@ stages:
         "@
 
           Set-Content "$certDir\delivery.crt" $pem
-          Get-Content "$certDir\delivery.crt",
-          "$certDir\Artur.cer" |
-          Set-Content "$certDir\fullchain.crt"
       displayName: Extract CRT
+
+      - powershell: |
+        dir "$(Build.SourcesDirectory)\km_Praktyki\certs"
+        Get-Content "$(Build.SourcesDirectory)\km_Praktyki\certs\delivery.crt" -Head 5
+      displayName: Check certs
 
     - powershell: |
         $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
