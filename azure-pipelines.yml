@@ -1,9 +1,9 @@
 trigger:
   - master
 
-variableGroups:
-  - name: km
-
+variables:
+  - group: km
+  
 stages:
 
 # ==================================================
