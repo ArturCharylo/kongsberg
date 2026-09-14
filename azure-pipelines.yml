@@ -20,24 +20,6 @@ stages:
     steps:
     - checkout: self
 
-    - powershell: |
-        docker compose -p km-praktyki down --remove-orphans
-
-        $containers = @(
-          docker ps -aq --filter "publish=5173"
-          docker ps -aq --filter "publish=8000"
-          docker ps -aq --filter "publish=5432"
-          docker ps -aq --filter "publish=9090"
-          docker ps -aq --filter "publish=3000"
-          docker ps -aq --filter "publish=8080"
-          docker ps -aq --filter "publish=9091"
-        ) | Where-Object { $_ } | Sort-Object -Unique
-
-        if ($containers) {
-          docker rm -f $containers
-        }
-      displayName: Stop previous application containers
-
 # ==================================================
 # BUILD
 # ==================================================
@@ -154,11 +136,36 @@ stages:
       displayName: Build application stack
 
 # ==================================================
+# HELM VALIDATION
+# ==================================================
+- stage: HelmValidation
+  displayName: Helm Validation
+  dependsOn: Build
+
+  jobs:
+  - job: Validate
+    pool:
+      name: Default
+
+    steps:
+    - powershell: |
+        helm lint .\praktyki
+      displayName: Helm Lint
+
+    - powershell: |
+        helm template praktyki .\praktyki > rendered.yaml
+
+        if ($LASTEXITCODE -ne 0) {
+          exit $LASTEXITCODE
+        }
+      displayName: Helm Template Validation
+
+# ==================================================
 # TESTS AND COVERAGE
 # ==================================================
 - stage: Tests
   displayName: Tests and Code Coverage
-  dependsOn: Build
+  dependsOn: HelmValidation
 
   jobs:
   - job: Tests
@@ -562,111 +569,12 @@ stages:
         artifactName: grafana-monitoring
 
 # ==================================================
-# DEPLOY
-# ==================================================
-- stage: Deploy
-  displayName: Deploy Application
-  dependsOn: SecurityScan
-
-  jobs:
-  - job: Deploy
-    pool:
-      name: Default
-
-    steps:
-    - task: DownloadBuildArtifacts@0
-      displayName: Download Grafana Monitoring Configuration
-      inputs:
-        artifactName: grafana-monitoring
-
-    - task: DownloadBuildArtifacts@0
-      displayName: Download SBOM Metrics
-      inputs:
-        artifactName: sbom-metrics
-
-    - task: DownloadBuildArtifacts@0
-      displayName: Download Static Analysis Metrics
-      inputs:
-        artifactName: web-static-analysis-metrics
-
-    - powershell: |
-        $monitoringSource = "$(System.ArtifactsDirectory)\grafana-monitoring"
-        $monitoringTarget = "$(Build.SourcesDirectory)\monitoring"
-
-        Copy-Item "$monitoringSource\*" $monitoringTarget -Recurse -Force
-        Get-ChildItem $monitoringTarget -Recurse
-      displayName: Install Grafana Monitoring Configuration
-
-    - powershell: |
-        docker compose -p km-praktyki up -d
-
-        if ($LASTEXITCODE -ne 0) {
-          exit $LASTEXITCODE
-        }
-
-        openssl s_client -connect localhost:5173 -showcerts
-      displayName: Run application stack
-
-    - task: DownloadBuildArtifacts@0
-      inputs:
-        artifactName: trivy-metrics
-
-    - powershell: |
-        $metricsFile = "$(System.ArtifactsDirectory)\trivy-metrics\trivy-metrics.prom"
-
-        Test-Path $metricsFile
-        $content = Get-Content $metricsFile -Raw
-
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("Content-Type","text/plain")
-        $wc.UploadString(
-            "http://localhost:9091/metrics/job/trivy-scan",
-            "POST",
-            $content
-        )
-      displayName: Push Metrics To Pushgateway
-
-    - powershell: |
-        $metricsFile = "$(System.ArtifactsDirectory)\sbom-metrics\sbom-metrics.prom"
-
-        Test-Path $metricsFile
-        $content = Get-Content $metricsFile -Raw
-
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("Content-Type", "text/plain")
-        $wc.UploadString(
-            "http://localhost:9091/metrics/job/sbom-scan",
-            "POST",
-            $content
-        )
-      displayName: Push SBOM Metrics To Pushgateway
-
-    - powershell: |
-        $metricsFile = "$(System.ArtifactsDirectory)\web-static-analysis-metrics\web-static-analysis-metrics.prom"
-
-        if (-not (Test-Path $metricsFile)) {
-          throw "Static analysis metrics file was not found: $metricsFile"
-        }
-
-        $content = [System.IO.File]::ReadAllText($metricsFile)
-        $content = $content.Replace("`r`n", "`n").Replace("`r", "")
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-        $payload = [System.Text.Encoding]::UTF8.GetBytes($content)
-        $wc.UploadData(
-            "http://localhost:9091/metrics/job/web-static-analysis",
-            "PUT",
-            $payload
-        )
-      displayName: Push Static Analysis Metrics To Pushgateway
-
-# ==================================================
 # PUSH TO DEV
 # ==================================================
 
 - stage: PushDev
   displayName: Push Images To DEV
-  dependsOn: Deploy
+  dependsOn: SecurityScan
 
   jobs:
   - job: Push
@@ -677,14 +585,10 @@ stages:
 
     - powershell: |
         docker tag km-praktyki-api:latest knsberg.azurecr.io/praktyki-api:$(Build.BuildId)
-
         docker tag km-praktyki-frontend:latest knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)
-
-        docker tag grafana/grafana-enterprise:latest knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)
-
         docker tag postgres:16-alpine knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)
-
         docker tag prom/prometheus:latest knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)
+        docker tag grafana/grafana-enterprise:latest knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)
       displayName: Tag images for DEV
 
     - task: Docker@2
@@ -732,6 +636,43 @@ stages:
         tags: |
           $(Build.BuildId)
 
+    - powershell: |
+        kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl create secret docker-registry acr-pull-secret `
+          --docker-server=knsberg.azurecr.io `
+          --docker-username=$(DEV_ACR_USERNAME) `
+          --docker-password=$(DEV_ACR_PASSWORD) `
+          --namespace dev `
+          --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create DEV ACR Secret
+
+    - powershell: |
+        helm upgrade --install praktyki-dev `
+          "$(Build.SourcesDirectory)\praktyki" `
+          --namespace dev `
+          --create-namespace `
+          --set api.image.repository=knsberg.azurecr.io/praktyki-api `
+          --set frontend.image.repository=knsberg.azurecr.io/praktyki-frontend `
+          --set postgres.image.repository=knsberg.azurecr.io/praktyki-postgres `
+          --set prometheus.image.repository=knsberg.azurecr.io/praktyki-prom `
+          --set grafana.image.repository=knsberg.azurecr.io/praktyki-grafana `
+          --set api.image.tag=$(Build.BuildId) `
+          --set frontend.image.tag=$(Build.BuildId) `
+          --set postgres.image.tag=$(Build.BuildId) `
+          --set prometheus.image.tag=$(Build.BuildId) `
+          --set grafana.image.tag=$(Build.BuildId)
+      displayName: Deploy DEV with Helm
+
+    - powershell: |
+        kubectl rollout status deployment/api --namespace dev --timeout=300s
+        kubectl rollout status deployment/frontend --namespace dev --timeout=300s
+        kubectl rollout status deployment/postgres --namespace dev --timeout=300s
+        kubectl rollout status deployment/prometheus --namespace dev --timeout=300s
+        kubectl rollout status deployment/grafana --namespace dev --timeout=300s
+        kubectl get hpa -n dev
+      displayName: Verify Rollout
+
 # ==================================================
 # PUSH TO DEV
 # ==================================================
@@ -751,14 +692,10 @@ stages:
 
     - powershell: |
         docker tag km-praktyki-api:latest kmprod.azurecr.io/praktyki-api:$(Build.BuildId)
-
         docker tag km-praktyki-frontend:latest kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)
-
-        docker tag grafana/grafana-enterprise:latest kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)
-
         docker tag postgres:16-alpine kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)
-
         docker tag prom/prometheus:latest kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)
+        docker tag grafana/grafana-enterprise:latest kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)
       displayName: Tag images for PROD
 
     - task: Docker@2
@@ -806,13 +743,50 @@ stages:
         tags: |
           $(Build.BuildId)
 
+    - powershell: |
+        kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl create secret docker-registry acr-pull-secret `
+          --docker-server=kmprod.azurecr.io `
+          --docker-username=$(PROD_ACR_USERNAME) `
+          --docker-password=$(PROD_ACR_PASSWORD) `
+          --namespace prod `
+          --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create PROD ACR Secret
+
+    - powershell: |
+        helm upgrade --install praktyki-prod `
+          "$(Build.SourcesDirectory)\praktyki" `
+          --namespace prod `
+          --create-namespace `
+          --set api.image.repository=kmprod.azurecr.io/praktyki-api `
+          --set frontend.image.repository=kmprod.azurecr.io/praktyki-frontend `
+          --set postgres.image.repository=kmprod.azurecr.io/praktyki-postgres `
+          --set prometheus.image.repository=kmprod.azurecr.io/praktyki-prom `
+          --set grafana.image.repository=kmprod.azurecr.io/praktyki-grafana `
+          --set api.image.tag=$(Build.BuildId) `
+          --set frontend.image.tag=$(Build.BuildId) `
+          --set postgres.image.tag=$(Build.BuildId) `
+          --set prometheus.image.tag=$(Build.BuildId) `
+          --set grafana.image.tag=$(Build.BuildId)
+      displayName: Deploy PROD with Helm
+
+    - powershell: |
+        kubectl rollout status deployment/api --namespace prod --timeout=300s
+        kubectl rollout status deployment/frontend --namespace prod --timeout=300s
+        kubectl rollout status deployment/postgres --namespace prod --timeout=300s
+        kubectl rollout status deployment/prometheus --namespace prod --timeout=300s
+        kubectl rollout status deployment/grafana --namespace prod --timeout=300s
+        kubectl get hpa -n prod
+      displayName: Verify Rollout
+
 # ==================================================
 # DIAGNOSTICS
 # ==================================================
 - stage: Diagnostics
   displayName: Diagnostics
   dependsOn:
-  - PushDev
+  - PushProd
 
   jobs:
   - job: Diagnostics
@@ -823,4 +797,7 @@ stages:
     - powershell: |
         docker images
         docker ps -a
+        kubectl get pods -A
+        kubectl get hpa -A
+        kubectl get pvc -A
       displayName: Diagnostics

@@ -1,6 +1,5 @@
-global:
-  imagePullSecrets:
-    - acr-pull-secret
+imagePullSecrets:
+  - acr-pull-secret
 
 api:
   replicaCount: 2

@@ -15,7 +15,9 @@ spec:
         app: grafana
     spec:
       imagePullSecrets:
-      - name: acr-pull-secret
+      {{- range .Values.imagePullSecrets }}
+      - name: {{ . }}
+      {{- end }}
       containers:
       - name: grafana
         image: "{{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}"

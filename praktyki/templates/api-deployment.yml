@@ -15,7 +15,9 @@ spec:
         app: api
     spec:
       imagePullSecrets:
-      - name: acr-pull-secret
+      {{- range .Values.imagePullSecrets }}
+      - name: {{ . }}
+      {{- end }}
       containers:
       - name: api
         image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
