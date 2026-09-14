@@ -224,26 +224,36 @@ stages:
         failIfCoverageEmpty: true
 
     - powershell: |
-        $backendCoverage = Get-Content "backend\coverage.json" -Raw | ConvertFrom-Json
-        $frontendCoverage = Get-Content "km_Praktyki\coverage\coverage-summary.json" -Raw | ConvertFrom-Json
-
-        $backendPercent = [math]::Round([double]$backendCoverage.totals.percent_covered, 2)
-        $frontendPercent = [math]::Round([double]$frontendCoverage.total.lines.pct, 2)
-        $averagePercent = [math]::Round(($backendPercent + $frontendPercent) / 2, 2)
-
-        @(
-          '# Test and Code Coverage Summary'
-          ''
-          '| Area | Tests | Line coverage |'
-          '| --- | ---: | ---: |'
-          "| Backend | pytest | $backendPercent% |"
-          "| Frontend | Vitest | $frontendPercent% |"
-          "| Average | | $averagePercent% |"
-          ''
-          'Detailed JUnit and coverage reports are available in the published pipeline results and artifacts.'
-        ) | Set-Content "test-coverage-summary.md"
-
         New-Item -ItemType Directory -Force -Path "test-and-coverage-reports" | Out-Null
+
+        @'
+        import json
+        from pathlib import Path
+
+        backend = json.loads(Path('backend/coverage.json').read_text())
+        frontend = json.loads(Path('km_Praktyki/coverage/coverage-summary.json').read_text())
+
+        backend_percent = round(backend['totals']['percent_covered'], 2)
+        frontend_percent = round(frontend['total']['lines']['pct'], 2)
+        average_percent = round((backend_percent + frontend_percent) / 2, 2)
+
+        Path('test-coverage-summary.md').write_text(
+            '\n'.join([
+                '# Test and Code Coverage Summary',
+                '',
+                '| Area | Tests | Line coverage |',
+                '| --- | ---: | ---: |',
+                f'| Backend | pytest | {backend_percent}% |',
+                f'| Frontend | Vitest | {frontend_percent}% |',
+                f'| Average | | {average_percent}% |',
+                '',
+                'Detailed JUnit and coverage reports are available in the published pipeline results and artifacts.',
+                '',
+            ]),
+            encoding='utf-8',
+        )
+        '@ | python -
+
         Copy-Item "backend\test-results.xml", "backend\coverage.xml", "backend\coverage.json" "test-and-coverage-reports"
         Copy-Item "km_Praktyki\test-results\frontend-junit.xml", "test-and-coverage-reports"
         Copy-Item "km_Praktyki\coverage\coverage-summary.json", "test-and-coverage-reports"
