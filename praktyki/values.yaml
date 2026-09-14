@@ -1,0 +1,71 @@
+global:
+  imagePullSecrets:
+    - acr-pull-secret
+
+api:
+  replicaCount: 2
+
+  image:
+    repository: kmprod.azurecr.io/praktyki-api
+    tag: "133"
+
+  service:
+    type: ClusterIP
+    port: 8000
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 60
+
+frontend:
+  replicaCount: 2
+
+  image:
+    repository: kmprod.azurecr.io/praktyki-frontend
+    tag: "133"
+
+  service:
+    type: NodePort
+    port: 80
+    nodePort: 30080
+
+postgres:
+  replicaCount: 1
+
+  image:
+    repository: kmprod.azurecr.io/praktyki-postgres
+    tag: "133"
+
+  database: textsdb
+  username: postgres
+
+  persistence:
+    enabled: true
+    size: 1Gi
+
+prometheus:
+  enabled: true
+
+  image:
+    repository: kmprod.azurecr.io/praktyki-prom
+    tag: "133"
+
+grafana:
+  enabled: true
+
+  image:
+    repository: kmprod.azurecr.io/praktyki-grafana
+    tag: "133"
+
+  adminUser: admin
+  adminPassword: admin
