@@ -154,11 +154,119 @@ stages:
       displayName: Build application stack
 
 # ==================================================
+# TESTS AND COVERAGE
+# ==================================================
+- stage: Tests
+  displayName: Tests and Code Coverage
+  dependsOn: Build
+
+  jobs:
+  - job: Tests
+    pool:
+      name: Default
+
+    steps:
+    - powershell: |
+        python -m pip install -r "$(Build.SourcesDirectory)\backend\requirements-test.txt"
+      displayName: Install backend test dependencies
+
+    - powershell: |
+        Set-Location "$(Build.SourcesDirectory)"
+        python -m pytest backend/tests `
+          --cov=backend `
+          --cov-report=term `
+          --cov-report=html:backend\htmlcov `
+          --cov-report=xml:backend\coverage.xml `
+          --cov-report=json:backend\coverage.json `
+          --junitxml=backend\test-results.xml
+      displayName: Run backend tests with coverage
+
+    - task: PublishTestResults@2
+      displayName: Publish backend test results
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: 'backend/test-results.xml'
+        testRunTitle: Backend tests
+        failTaskOnFailedTests: true
+
+    - task: PublishCodeCoverageResults@2
+      displayName: Publish backend coverage
+      condition: succeededOrFailed()
+      inputs:
+        summaryFileLocation: '$(Build.SourcesDirectory)/backend/coverage.xml'
+        pathToSources: '$(Build.SourcesDirectory)'
+        reportDirectory: '$(Build.SourcesDirectory)/backend/htmlcov'
+        failIfCoverageEmpty: true
+
+    - powershell: |
+        Set-Location "$(Build.SourcesDirectory)\km_Praktyki"
+        npm ci
+        npm run test:coverage -- --reporter=junit --outputFile=test-results\frontend-junit.xml
+      displayName: Run frontend tests with coverage
+
+    - task: PublishTestResults@2
+      displayName: Publish frontend test results
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: 'km_Praktyki/test-results/frontend-junit.xml'
+        testRunTitle: Frontend tests
+        failTaskOnFailedTests: true
+
+    - task: PublishCodeCoverageResults@2
+      displayName: Publish frontend coverage
+      condition: succeededOrFailed()
+      inputs:
+        summaryFileLocation: '$(Build.SourcesDirectory)/km_Praktyki/coverage/cobertura-coverage.xml'
+        pathToSources: '$(Build.SourcesDirectory)/km_Praktyki'
+        reportDirectory: '$(Build.SourcesDirectory)/km_Praktyki/coverage'
+        failIfCoverageEmpty: true
+
+    - powershell: |
+        $backendCoverage = Get-Content "backend\coverage.json" -Raw | ConvertFrom-Json
+        $frontendCoverage = Get-Content "km_Praktyki\coverage\coverage-summary.json" -Raw | ConvertFrom-Json
+
+        $backendPercent = [math]::Round([double]$backendCoverage.totals.percent_covered, 2)
+        $frontendPercent = [math]::Round([double]$frontendCoverage.total.lines.pct, 2)
+        $averagePercent = [math]::Round(($backendPercent + $frontendPercent) / 2, 2)
+
+        @(
+          '# Test and Code Coverage Summary'
+          ''
+          '| Area | Tests | Line coverage |'
+          '| --- | ---: | ---: |'
+          "| Backend | pytest | $backendPercent% |"
+          "| Frontend | Vitest | $frontendPercent% |"
+          "| Average | | $averagePercent% |"
+          ''
+          'Detailed JUnit and coverage reports are available in the published pipeline results and artifacts.'
+        ) | Set-Content "test-coverage-summary.md"
+
+        New-Item -ItemType Directory -Force -Path "test-and-coverage-reports" | Out-Null
+        Copy-Item "backend\test-results.xml", "backend\coverage.xml", "backend\coverage.json" "test-and-coverage-reports"
+        Copy-Item "km_Praktyki\test-results\frontend-junit.xml", "test-and-coverage-reports"
+        Copy-Item "km_Praktyki\coverage\coverage-summary.json", "test-and-coverage-reports"
+        Copy-Item "test-coverage-summary.md", "test-and-coverage-reports"
+
+        Write-Host "##vso[task.uploadsummary]$(Build.SourcesDirectory)\test-coverage-summary.md"
+      displayName: Add coverage to Pipeline Summary
+      condition: succeededOrFailed()
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish test and coverage reports
+      condition: succeededOrFailed()
+      inputs:
+        pathToPublish: '$(Build.SourcesDirectory)\test-and-coverage-reports'
+        artifactName: test-and-coverage-reports
+        artifactType: container
+
+# ==================================================
 # SECURITY
 # ==================================================
 - stage: SecurityScan
   displayName: Security Scan
-  dependsOn: Build
+  dependsOn: Tests
 
   jobs:
   - job: Scan
