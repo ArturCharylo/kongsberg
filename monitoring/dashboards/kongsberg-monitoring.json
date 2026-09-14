@@ -116,6 +116,59 @@
       ]
     },
     {
+      "id": 10,
+      "type": "stat",
+      "title": "Web static analysis errors",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "web_static_analysis_errors_total",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Web static analysis warnings",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "web_static_analysis_warnings_total",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Files with static analysis issues",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "web_static_analysis_files_with_errors_total + web_static_analysis_files_with_warnings_total",
+          "instant": true
+        }
+      ]
+    },
+    {
       "id": 4,
       "type": "timeseries",
       "title": "Container CPU usage",

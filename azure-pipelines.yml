@@ -205,6 +205,40 @@ stages:
         npm run test:coverage -- --reporter=junit --outputFile=test-results\frontend-junit.xml
       displayName: Run frontend tests with coverage
 
+    - powershell: |
+        Set-Location "$(Build.SourcesDirectory)\km_Praktyki"
+        npm run lint -- --format json --output-file eslint-report.json
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "ESLint found issues. The report will still be published."
+          exit $LASTEXITCODE
+        }
+      displayName: Run frontend static code analysis
+      condition: succeededOrFailed()
+
+    - powershell: |
+        Set-Location "$(Build.SourcesDirectory)"
+        python km_Praktyki\scripts\eslint_to_prometheus.py `
+          km_Praktyki\eslint-report.json `
+          web-static-analysis-metrics.prom
+      displayName: Generate static analysis metrics
+      condition: succeededOrFailed()
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish frontend static analysis report
+      condition: succeededOrFailed()
+      inputs:
+        pathToPublish: '$(Build.SourcesDirectory)\km_Praktyki\eslint-report.json'
+        artifactName: frontend-static-analysis-report
+        artifactType: container
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish static analysis metrics
+      condition: succeededOrFailed()
+      inputs:
+        pathToPublish: '$(Build.SourcesDirectory)\web-static-analysis-metrics.prom'
+        artifactName: web-static-analysis-metrics
+        artifactType: container
+
     - task: PublishTestResults@2
       displayName: Publish frontend test results
       condition: succeededOrFailed()
@@ -550,6 +584,11 @@ stages:
       inputs:
         artifactName: sbom-metrics
 
+    - task: DownloadBuildArtifacts@0
+      displayName: Download Static Analysis Metrics
+      inputs:
+        artifactName: web-static-analysis-metrics
+
     - powershell: |
         $monitoringSource = "$(System.ArtifactsDirectory)\grafana-monitoring"
         $monitoringTarget = "$(Build.SourcesDirectory)\monitoring"
@@ -601,6 +640,23 @@ stages:
             $content
         )
       displayName: Push SBOM Metrics To Pushgateway
+
+    - powershell: |
+        $metricsFile = "$(System.ArtifactsDirectory)\web-static-analysis-metrics\web-static-analysis-metrics.prom"
+
+        if (-not (Test-Path $metricsFile)) {
+          throw "Static analysis metrics file was not found: $metricsFile"
+        }
+
+        $content = Get-Content $metricsFile -Raw
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("Content-Type", "text/plain")
+        $wc.UploadString(
+            "http://localhost:9091/metrics/job/web-static-analysis",
+            "POST",
+            $content
+        )
+      displayName: Push Static Analysis Metrics To Pushgateway
 
 # ==================================================
 # PUSH TO DEV
