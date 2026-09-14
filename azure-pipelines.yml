@@ -254,10 +254,12 @@ stages:
         )
         '@ | python -
 
-        Copy-Item "backend\test-results.xml", "backend\coverage.xml", "backend\coverage.json" "test-and-coverage-reports"
-        Copy-Item "km_Praktyki\test-results\frontend-junit.xml", "test-and-coverage-reports"
-        Copy-Item "km_Praktyki\coverage\coverage-summary.json", "test-and-coverage-reports"
-        Copy-Item "test-coverage-summary.md", "test-and-coverage-reports"
+        Copy-Item -Path "backend\test-results.xml" -Destination "test-and-coverage-reports" -Force
+        Copy-Item -Path "backend\coverage.xml" -Destination "test-and-coverage-reports" -Force
+        Copy-Item -Path "backend\coverage.json" -Destination "test-and-coverage-reports" -Force
+        Copy-Item -Path "km_Praktyki\test-results\frontend-junit.xml" -Destination "test-and-coverage-reports" -Force
+        Copy-Item -Path "km_Praktyki\coverage\coverage-summary.json" -Destination "test-and-coverage-reports" -Force
+        Copy-Item -Path "test-coverage-summary.md" -Destination "test-and-coverage-reports" -Force
 
         Write-Host "##vso[task.uploadsummary]$(Build.SourcesDirectory)\test-coverage-summary.md"
       displayName: Add coverage to Pipeline Summary
