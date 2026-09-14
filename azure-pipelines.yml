@@ -637,15 +637,25 @@ stages:
           $(Build.BuildId)
 
     - powershell: |
+        if ([string]::IsNullOrWhiteSpace($env:DEV_ACR_USERNAME) -or
+            [string]::IsNullOrWhiteSpace($env:DEV_ACR_PASSWORD) -or
+            $env:DEV_ACR_USERNAME -like '$(*' -or
+            $env:DEV_ACR_PASSWORD -like '$(*') {
+          throw "DEV ACR credentials are missing. Define DEV_ACR_USERNAME and DEV_ACR_PASSWORD as secret variables."
+        }
+
         kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
 
         kubectl create secret docker-registry acr-pull-secret `
           --docker-server=knsberg.azurecr.io `
-          --docker-username=$(DEV_ACR_USERNAME) `
-          --docker-password=$(DEV_ACR_PASSWORD) `
+          --docker-username="$env:DEV_ACR_USERNAME" `
+          --docker-password="$env:DEV_ACR_PASSWORD" `
           --namespace dev `
           --dry-run=client -o yaml | kubectl apply -f -
       displayName: Create DEV ACR Secret
+      env:
+        DEV_ACR_USERNAME: $(DEV_ACR_USERNAME)
+        DEV_ACR_PASSWORD: $(DEV_ACR_PASSWORD)
 
     - powershell: |
         helm upgrade --install praktyki-dev `
@@ -744,15 +754,25 @@ stages:
           $(Build.BuildId)
 
     - powershell: |
+        if ([string]::IsNullOrWhiteSpace($env:PROD_ACR_USERNAME) -or
+            [string]::IsNullOrWhiteSpace($env:PROD_ACR_PASSWORD) -or
+            $env:PROD_ACR_USERNAME -like '$(*' -or
+            $env:PROD_ACR_PASSWORD -like '$(*') {
+          throw "PROD ACR credentials are missing. Define PROD_ACR_USERNAME and PROD_ACR_PASSWORD as secret variables."
+        }
+
         kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
 
         kubectl create secret docker-registry acr-pull-secret `
           --docker-server=kmprod.azurecr.io `
-          --docker-username=$(PROD_ACR_USERNAME) `
-          --docker-password=$(PROD_ACR_PASSWORD) `
+          --docker-username="$env:PROD_ACR_USERNAME" `
+          --docker-password="$env:PROD_ACR_PASSWORD" `
           --namespace prod `
           --dry-run=client -o yaml | kubectl apply -f -
       displayName: Create PROD ACR Secret
+      env:
+        PROD_ACR_USERNAME: $(PROD_ACR_USERNAME)
+        PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
 
     - powershell: |
         helm upgrade --install praktyki-prod `
@@ -786,7 +806,9 @@ stages:
 - stage: Diagnostics
   displayName: Diagnostics
   dependsOn:
+  - PushDev
   - PushProd
+  condition: always()
 
   jobs:
   - job: Diagnostics
