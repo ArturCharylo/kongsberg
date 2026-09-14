@@ -648,13 +648,15 @@ stages:
           throw "Static analysis metrics file was not found: $metricsFile"
         }
 
-        $content = Get-Content $metricsFile -Raw
+        $content = [System.IO.File]::ReadAllText($metricsFile)
+        $content = $content.Replace("`r`n", "`n").Replace("`r", "")
         $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("Content-Type", "text/plain")
-        $wc.UploadString(
+        $wc.Headers.Add("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+        $payload = [System.Text.Encoding]::UTF8.GetBytes($content)
+        $wc.UploadData(
             "http://localhost:9091/metrics/job/web-static-analysis",
-            "POST",
-            $content
+            "PUT",
+            $payload
         )
       displayName: Push Static Analysis Metrics To Pushgateway
 
