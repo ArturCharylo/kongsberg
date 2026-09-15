@@ -589,10 +589,13 @@ stages:
         [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
         $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
         $requiredHosts = @('frontend.dev.local', 'api.dev.local', 'grafana.dev.local', 'prometheus.dev.local')
-        foreach ($host in $requiredHosts) {
-          $hostPattern = [regex]::Escape($host)
-          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
-            throw "The Key Vault certificate does not contain a SAN for $host. A localhost-only certificate cannot terminate TLS for this ingress host."
+        foreach ($dnsName in $requiredHosts) {
+          $hostPattern = :Escape($dnsName)
+
+          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and
+              $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
+
+            throw "The Key Vault certificate does not contain a SAN for $dnsName."
           }
         }
 
@@ -852,10 +855,13 @@ stages:
         [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
         $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
         $requiredHosts = @('frontend.prod.local', 'api.prod.local', 'grafana.prod.local', 'prometheus.prod.local')
-        foreach ($host in $requiredHosts) {
-          $hostPattern = [regex]::Escape($host)
-          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and $sanText -notmatch 'DNS:\*\.prod\.local(,|\s|$)') {
-            throw "The Key Vault certificate does not contain a SAN for $host. A localhost-only certificate cannot terminate TLS for this ingress host."
+        foreach ($dnsName in $requiredHosts) {
+          $hostPattern = :Escape($dnsName)
+
+          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and
+              $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
+
+            throw "The Key Vault certificate does not contain a SAN for $dnsName."
           }
         }
 
