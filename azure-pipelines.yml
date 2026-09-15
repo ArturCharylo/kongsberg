@@ -664,6 +664,30 @@ stages:
           --dry-run=client -o yaml | kubectl apply -f -
       displayName: Create DEV Grafana Dashboards ConfigMap
 
+    - task: DownloadBuildArtifacts@1
+      displayName: Download DEV monitoring metrics
+      inputs:
+        buildType: current
+        downloadType: specific
+        artifactName: trivy-metrics
+        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: Download DEV SBOM metrics
+      inputs:
+        buildType: current
+        downloadType: specific
+        artifactName: sbom-metrics
+        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: Download DEV static analysis metrics
+      inputs:
+        buildType: current
+        downloadType: specific
+        artifactName: web-static-analysis-metrics
+        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
+
     - powershell: |
         helm upgrade --install praktyki-dev `
           "$(Build.SourcesDirectory)\praktyki" `
@@ -676,6 +700,22 @@ stages:
           --set prometheus.image.tag=$(Build.BuildId) `
           --set grafana.image.tag=$(Build.BuildId)
       displayName: Deploy DEV with Helm
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $portForward = Start-Process kubectl -ArgumentList @('port-forward', 'svc/pushgateway', '19091:9091', '-n', 'dev') -PassThru -WindowStyle Hidden
+        try {
+          Start-Sleep -Seconds 5
+          $metricFiles = Get-ChildItem -Path '$(Pipeline.Workspace)\ci-metrics' -Recurse -Filter '*.prom'
+          foreach ($file in $metricFiles) {
+            $job = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            Invoke-WebRequest -Uri "http://127.0.0.1:19091/metrics/job/azure-pipelines/environment/dev/source/$job" -Method Post -InFile $file.FullName -ContentType 'text/plain'
+          }
+        }
+        finally {
+          Stop-Process -Id $portForward.Id -Force -ErrorAction SilentlyContinue
+        }
+      displayName: Publish DEV monitoring metrics
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
@@ -795,6 +835,30 @@ stages:
         PROD_ACR_USERNAME: $(PROD_ACR_USERNAME)
         PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
 
+    - task: DownloadBuildArtifacts@1
+      displayName: Download PROD monitoring metrics
+      inputs:
+        buildType: current
+        downloadType: specific
+        artifactName: trivy-metrics
+        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: Download PROD SBOM metrics
+      inputs:
+        buildType: current
+        downloadType: specific
+        artifactName: sbom-metrics
+        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: Download PROD static analysis metrics
+      inputs:
+        buildType: current
+        downloadType: specific
+        artifactName: web-static-analysis-metrics
+        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
+
     - powershell: |
         kubectl create configmap grafana-dashboards `
           --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
@@ -814,6 +878,22 @@ stages:
           --set prometheus.image.tag=$(Build.BuildId) `
           --set grafana.image.tag=$(Build.BuildId)
       displayName: Deploy PROD with Helm
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $portForward = Start-Process kubectl -ArgumentList @('port-forward', 'svc/pushgateway', '19092:9091', '-n', 'prod') -PassThru -WindowStyle Hidden
+        try {
+          Start-Sleep -Seconds 5
+          $metricFiles = Get-ChildItem -Path '$(Pipeline.Workspace)\ci-metrics' -Recurse -Filter '*.prom'
+          foreach ($file in $metricFiles) {
+            $job = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            Invoke-WebRequest -Uri "http://127.0.0.1:19092/metrics/job/azure-pipelines/environment/prod/source/$job" -Method Post -InFile $file.FullName -ContentType 'text/plain'
+          }
+        }
+        finally {
+          Stop-Process -Id $portForward.Id -Force -ErrorAction SilentlyContinue
+        }
+      displayName: Publish PROD monitoring metrics
 
     - powershell: |
         $ErrorActionPreference = 'Stop'

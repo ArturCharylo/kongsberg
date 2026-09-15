@@ -1,0 +1,48 @@
+{{- if .Values.monitoring.pushgateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway
+  labels:
+    app: pushgateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pushgateway
+  template:
+    metadata:
+      labels:
+        app: pushgateway
+    spec:
+      containers:
+      - name: pushgateway
+        image: "{{ .Values.monitoring.pushgateway.image }}:{{ .Values.monitoring.pushgateway.tag }}"
+        args:
+        - --persistence.file=/pushgateway/metrics.db
+        ports:
+        - name: http
+          containerPort: 9091
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+        livenessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        volumeMounts:
+        - name: data
+          mountPath: /pushgateway
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pushgateway-data
+{{- end }}

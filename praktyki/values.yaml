@@ -69,6 +69,19 @@ prometheus:
 
   externalUrl: "http://prometheus.local"
 
+monitoring:
+  pushgateway:
+    enabled: true
+    image: prom/pushgateway
+    tag: latest
+    persistence:
+      enabled: true
+      size: 1Gi
+  cadvisor:
+    enabled: true
+    image: gcr.io/cadvisor/cadvisor
+    tag: latest
+
 grafana:
   enabled: true
 

@@ -1,0 +1,12 @@
+{{- if and .Values.monitoring.pushgateway.enabled .Values.monitoring.pushgateway.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pushgateway-data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.monitoring.pushgateway.persistence.size }}
+{{- end }}

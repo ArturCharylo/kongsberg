@@ -134,7 +134,7 @@ kubectl exec deployment/grafana -n kind -- test -f /var/lib/grafana/dashboards/k
 curl.exe -u admin:change-me -H "Host: grafana.local" http://127.0.0.1/api/search
 ```
 
-Dashboard jest wczytywany z ConfigMap przez Grafana provisioning, a jego stan jest zapisywany w PVC `grafana-data`.
+Dashboard jest wczytywany z ConfigMap przez Grafana provisioning, a jego stan jest zapisywany w PVC `grafana-data`. Metryki CI są wysyłane do Pushgateway i trwale przechowywane w PVC `pushgateway-data`.
 
 ## Diagnostyka frontendu
 

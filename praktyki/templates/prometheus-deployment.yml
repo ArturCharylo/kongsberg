@@ -18,6 +18,8 @@ spec:
     metadata:
       labels:
         app: prometheus
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/prometheus-config.yml") . | sha256sum }}
     spec:
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}

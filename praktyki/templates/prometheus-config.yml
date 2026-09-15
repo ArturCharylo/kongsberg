@@ -12,3 +12,15 @@ data:
         static_configs:
           - targets:
             - api:8000
+      {{- if .Values.monitoring.pushgateway.enabled }}
+      - job_name: pushgateway
+        static_configs:
+          - targets:
+            - pushgateway:9091
+      {{- end }}
+      {{- if .Values.monitoring.cadvisor.enabled }}
+      - job_name: cadvisor
+        static_configs:
+          - targets:
+            - cadvisor:8080
+      {{- end }}
