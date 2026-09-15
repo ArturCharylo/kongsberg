@@ -1,5 +1,5 @@
 imagePullSecrets:
-  - acr-pull-secret
+  []
 
 api:
   replicaCount: 2
@@ -7,6 +7,8 @@ api:
   image:
     repository: ""
     tag: latest
+
+  frontendOrigin: "http://frontend.local"
 
   service:
     type: ClusterIP
@@ -34,7 +36,7 @@ frontend:
     tag: latest
 
   service:
-    type: NodePort
+    type: ClusterIP
     port: 80
 
 postgres:
@@ -47,6 +49,13 @@ postgres:
   database: textsdb
   username: postgres
 
+  auth:
+    existingSecret: ""
+    secretName: postgres
+    database: textsdb
+    username: postgres
+    password: change-me
+
   persistence:
     enabled: true
     size: 1Gi
@@ -58,6 +67,8 @@ prometheus:
     repository: ""
     tag: latest
 
+  externalUrl: "http://prometheus.local"
+
 grafana:
   enabled: true
 
@@ -66,8 +77,38 @@ grafana:
     tag: latest
 
   service:
-    type: NodePort
+    type: ClusterIP
     port: 3000
+
+  server:
+    rootUrl: "http://grafana.local"
+    domain: grafana.local
+
+  admin:
+    existingSecret: ""
+    secretName: grafana-admin
+    user: admin
+    password: change-me
+
+ingress:
+  enabled: true
+
+  className: nginx
+  hosts:
+    frontend: frontend.local
+    api: api.local
+    grafana: grafana.local
+    prometheus: prometheus.local
+
+  annotations: {}
+
+  tls:
+    enabled: false
+    secretName: praktyki-tls
+
+  certManager:
+    enabled: false
+    clusterIssuer: letsencrypt-prod
 
   adminUser: admin
   adminPassword: admin

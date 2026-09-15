@@ -29,10 +29,10 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: postgres
+              name: {{ .Values.postgres.auth.existingSecret | default .Values.postgres.auth.secretName }}
               key: database-url
         - name: FRONTEND_ORIGIN
-          value: https://localhost:30443
+          value: {{ .Values.api.frontendOrigin | quote }}
         readinessProbe:
           httpGet:
             path: /health

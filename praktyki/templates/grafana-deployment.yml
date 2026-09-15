@@ -27,11 +27,21 @@ spec:
           containerPort: 3000
         env:
         - name: GF_SECURITY_ADMIN_USER
-          value: admin
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.grafana.admin.existingSecret | default .Values.grafana.admin.secretName }}
+              key: user
         - name: GF_SECURITY_ADMIN_PASSWORD
-          value: admin
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.grafana.admin.existingSecret | default .Values.grafana.admin.secretName }}
+              key: password
         - name: GF_METRICS_ENABLED
           value: "true"
+        - name: GF_SERVER_ROOT_URL
+          value: {{ .Values.grafana.server.rootUrl | quote }}
+        - name: GF_SERVER_DOMAIN
+          value: {{ .Values.grafana.server.domain | quote }}
         volumeMounts:
         - name: data
           mountPath: /var/lib/grafana

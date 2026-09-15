@@ -1,13 +1,14 @@
+imagePullSecrets:
+  - acr-pull-secret
+
 api:
   image:
     repository: kmprod.azurecr.io/praktyki-api
+  frontendOrigin: "https://frontend.local"
 
 frontend:
   image:
     repository: kmprod.azurecr.io/praktyki-frontend
-
-  service:
-    nodePort: 32080
 
 postgres:
   image:
@@ -16,9 +17,21 @@ postgres:
 prometheus:
   image:
     repository: kmprod.azurecr.io/praktyki-prom
+  externalUrl: "https://prometheus.local"
 
 grafana:
   image:
     repository: kmprod.azurecr.io/praktyki-grafana
-  service:
-    nodePort: 32300
+
+  server:
+    rootUrl: "https://grafana.local"
+    domain: grafana.local
+
+ingress:
+  tls:
+    enabled: false
+    secretName: praktyki-tls
+
+  certManager:
+    enabled: false
+    clusterIssuer: letsencrypt-prod

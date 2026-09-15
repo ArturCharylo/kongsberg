@@ -1,12 +1,14 @@
+imagePullSecrets:
+  - acr-pull-secret
+
 api:
   image:
     repository: knsberg.azurecr.io/praktyki-api
+  frontendOrigin: "http://frontend.local"
 
 frontend:
   image:
     repository: knsberg.azurecr.io/praktyki-frontend
-  service:
-    nodePort: 31080
 
 postgres:
   image:
@@ -15,9 +17,13 @@ postgres:
 prometheus:
   image:
     repository: knsberg.azurecr.io/praktyki-prom
+  externalUrl: "http://prometheus.local"
 
 grafana:
   image:
     repository: knsberg.azurecr.io/praktyki-grafana
-  service:
-    nodePort: 31300
+
+grafana:
+  server:
+    rootUrl: "http://grafana.local"
+    domain: grafana.local

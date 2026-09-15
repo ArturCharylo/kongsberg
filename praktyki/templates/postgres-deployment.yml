@@ -29,17 +29,17 @@ spec:
         - name: POSTGRES_DB
           valueFrom:
             secretKeyRef:
-              name: postgres
+              name: {{ .Values.postgres.auth.existingSecret | default .Values.postgres.auth.secretName }}
               key: database
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
-              name: postgres
+              name: {{ .Values.postgres.auth.existingSecret | default .Values.postgres.auth.secretName }}
               key: username
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: postgres
+              name: {{ .Values.postgres.auth.existingSecret | default .Values.postgres.auth.secretName }}
               key: password
         volumeMounts:
         - name: data

@@ -1,0 +1,35 @@
+imagePullSecrets: []
+
+api:
+  image:
+    repository: praktyki-api
+    tag: local
+  frontendOrigin: "http://frontend.local"
+
+frontend:
+  image:
+    repository: praktyki-frontend
+    tag: local
+
+postgres:
+  image:
+    repository: postgres
+    tag: "16-alpine"
+
+prometheus:
+  image:
+    repository: prom/prometheus
+    tag: latest
+  externalUrl: "http://prometheus.local"
+
+grafana:
+  image:
+    repository: grafana/grafana
+    tag: latest
+  server:
+    rootUrl: "http://grafana.local"
+    domain: grafana.local
+
+ingress:
+  tls:
+    enabled: false

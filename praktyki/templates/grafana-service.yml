@@ -3,11 +3,10 @@ kind: Service
 metadata:
   name: grafana
 spec:
-  type: NodePort
+  type: {{ .Values.grafana.service.type }}
   selector:
     app: grafana
   ports:
   - name: http
-    port: 3000
+    port: {{ .Values.grafana.service.port }}
     targetPort: http
-    nodePort: {{ .Values.grafana.service.nodePort }}
