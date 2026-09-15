@@ -587,14 +587,15 @@ stages:
         $fullChain = Join-Path $certDir 'fullchain.crt'
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
-        $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
+        $sanText = (& openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName 2>&1 | Out-String)
+        Write-Host 'DEV certificate Subject Alternative Names:'
+        Write-Host $sanText
+        $sanEntries = [regex]::Matches($sanText, 'DNS:([^,\s]+)') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() }
         $requiredHosts = @('frontend.dev.local', 'api.dev.local', 'grafana.dev.local', 'prometheus.dev.local')
         foreach ($dnsName in $requiredHosts) {
-          $hostPattern = [regex]::Escape($dnsName)
-
-          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and
-              $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
-
+          $dnsName = $dnsName.ToLowerInvariant()
+          $wildcardName = '*.' + (($dnsName -split '\.', 2)[1])
+          if ($sanEntries -notcontains $dnsName -and $sanEntries -notcontains $wildcardName) {
             throw "The Key Vault certificate does not contain a SAN for $dnsName."
           }
         }
@@ -853,14 +854,15 @@ stages:
         $fullChain = Join-Path $certDir 'fullchain.crt'
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
-        $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
+        $sanText = (& openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName 2>&1 | Out-String)
+        Write-Host 'PROD certificate Subject Alternative Names:'
+        Write-Host $sanText
+        $sanEntries = [regex]::Matches($sanText, 'DNS:([^,\s]+)') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() }
         $requiredHosts = @('frontend.prod.local', 'api.prod.local', 'grafana.prod.local', 'prometheus.prod.local')
         foreach ($dnsName in $requiredHosts) {
-          $hostPattern = [regex]::Escape($dnsName)
-
-          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and
-              $sanText -notmatch 'DNS:\*\.prod\.local(,|\s|$)') {
-
+          $dnsName = $dnsName.ToLowerInvariant()
+          $wildcardName = '*.' + (($dnsName -split '\.', 2)[1])
+          if ($sanEntries -notcontains $dnsName -and $sanEntries -notcontains $wildcardName) {
             throw "The Key Vault certificate does not contain a SAN for $dnsName."
           }
         }
