@@ -7,9 +7,18 @@ Wymagane są Docker, `kind`, `kubectl` i Helm.
 ```powershell
 kind create cluster --config kind-config.yaml
 kubectl wait --namespace kube-system --for=condition=Ready node/praktyki-control-plane --timeout=120s
+docker port praktyki-control-plane
 ```
 
 Konfiguracja mapuje porty hosta 80 i 443 do control-plane. Nie uruchamiaj drugiego procesu zajmujacego te porty.
+Oczekiwany wynik zawiera `80/tcp` oraz `443/tcp`. Jesli istnieje juz klaster `praktyki` utworzony bez tych mapowan, mapowania nie da sie dodac przez `kubectl`; po zabezpieczeniu danych trzeba odtworzyc klaster:
+
+```powershell
+kind delete cluster --name praktyki
+kind create cluster --name praktyki --config kind-config.yaml
+```
+
+Usuniecie klastra usuwa zasoby lokalnego klastra, dlatego przed ta operacja wykonaj backup danych z PVC.
 
 ## 2. Kontroler Ingress
 
@@ -26,9 +35,36 @@ Kind nie dostarcza automatycznie provisionera dla PVC ani Metrics Servera. Zains
 
 ```powershell
 kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.31/deploy/local-path-storage.yaml
-kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-kubectl patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+$metricsPatch = @'
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "name": "metrics-server",
+            "image": "registry.k8s.io/metrics-server/metrics-server:v0.9.0",
+            "ports": [{"name": "https", "containerPort": 10250, "protocol": "TCP"}],
+            "args": [
+              "--cert-dir=/tmp",
+              "--secure-port=10250",
+              "--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname",
+              "--kubelet-use-node-status-port",
+              "--metric-resolution=15s",
+              "--kubelet-insecure-tls"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+'@
+$metricsPatch | Set-Content .\metrics-server-patch.json
+kubectl patch deployment metrics-server -n kube-system --type=merge --patch-file .\metrics-server-patch.json
+kubectl rollout status deployment/metrics-server -n kube-system --timeout=120s
+Remove-Item .\metrics-server-patch.json
 ```
 
 ## 4. Obrazy aplikacji
@@ -86,3 +122,15 @@ curl.exe -H "Host: api.local" http://127.0.0.1/health
 curl.exe -H "Host: grafana.local" http://127.0.0.1/api/health
 curl.exe -H "Host: prometheus.local" http://127.0.0.1/-/ready
 ```
+
+## Diagnostyka frontendu
+
+Service powinien wskazywac pody z etykieta `app=frontend`, a endpointy powinny miec port 80:
+
+```powershell
+kubectl describe svc frontend -n kind
+kubectl get endpoints frontend -n kind
+kubectl get pods -n kind --show-labels
+```
+
+Prawidlowy port-forward to `kubectl port-forward svc/frontend 8080:80 -n kind`. Testuj go pod adresem `http://127.0.0.1:8080/`. Jesli pojawia sie cAdvisor, sprawdz namespace i nazwe Service; w tym chartcie cAdvisor nie jest backendem `frontend`.
