@@ -703,17 +703,63 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        $portForward = Start-Process kubectl -ArgumentList @('port-forward', 'svc/pushgateway', '19091:9091', '-n', 'dev') -PassThru -WindowStyle Hidden
+        $stdout = Join-Path $env:TEMP 'pushgateway-dev.stdout.log'
+        $stderr = Join-Path $env:TEMP 'pushgateway-dev.stderr.log'
+        Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
+        $portForward = Start-Process kubectl `
+          -ArgumentList @('port-forward', '--address', '127.0.0.1', 'svc/pushgateway', '19091:9091', '-n', 'dev') `
+          -PassThru `
+          -RedirectStandardOutput $stdout `
+          -RedirectStandardError $stderr `
+          -WindowStyle Hidden
         try {
-          Start-Sleep -Seconds 5
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            if ($portForward.HasExited) {
+              $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+              throw "kubectl port-forward for DEV exited with code $($portForward.ExitCode). $details"
+            }
+
+            try {
+              $client = [System.Net.Sockets.TcpClient]::new()
+              $client.Connect('127.0.0.1', 19091)
+              $client.Dispose()
+              $ready = $true
+              break
+            }
+            catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+
+          if (-not $ready) {
+            $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+            throw "DEV Pushgateway port 19091 did not become ready. $details"
+          }
+
           $metricFiles = Get-ChildItem -Path '$(Pipeline.Workspace)\ci-metrics' -Recurse -Filter '*.prom'
+          if (-not $metricFiles) {
+            throw 'No .prom metric files were downloaded for DEV.'
+          }
+
           foreach ($file in $metricFiles) {
             $job = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-            Invoke-WebRequest -Uri "http://127.0.0.1:19091/metrics/job/azure-pipelines/environment/dev/source/$job" -Method Post -InFile $file.FullName -ContentType 'text/plain'
+            $body = [System.IO.File]::ReadAllText($file.FullName)
+            $body = $body.Replace("`r`n", "`n").Replace("`r", "`n")
+            if (-not $body.EndsWith("`n")) {
+              $body += "`n"
+            }
+            Invoke-WebRequest `
+              -Uri "http://127.0.0.1:19091/metrics/job/azure-pipelines/environment/dev/source/$job" `
+              -Method Post `
+              -Body $body `
+              -ContentType 'text/plain; version=0.0.4' `
+              -UseBasicParsing
           }
         }
         finally {
           Stop-Process -Id $portForward.Id -Force -ErrorAction SilentlyContinue
+          Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
         }
       displayName: Publish DEV monitoring metrics
 
@@ -881,17 +927,63 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        $portForward = Start-Process kubectl -ArgumentList @('port-forward', 'svc/pushgateway', '19092:9091', '-n', 'prod') -PassThru -WindowStyle Hidden
+        $stdout = Join-Path $env:TEMP 'pushgateway-prod.stdout.log'
+        $stderr = Join-Path $env:TEMP 'pushgateway-prod.stderr.log'
+        Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
+        $portForward = Start-Process kubectl `
+          -ArgumentList @('port-forward', '--address', '127.0.0.1', 'svc/pushgateway', '19092:9091', '-n', 'prod') `
+          -PassThru `
+          -RedirectStandardOutput $stdout `
+          -RedirectStandardError $stderr `
+          -WindowStyle Hidden
         try {
-          Start-Sleep -Seconds 5
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            if ($portForward.HasExited) {
+              $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+              throw "kubectl port-forward for PROD exited with code $($portForward.ExitCode). $details"
+            }
+
+            try {
+              $client = [System.Net.Sockets.TcpClient]::new()
+              $client.Connect('127.0.0.1', 19092)
+              $client.Dispose()
+              $ready = $true
+              break
+            }
+            catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+
+          if (-not $ready) {
+            $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+            throw "PROD Pushgateway port 19092 did not become ready. $details"
+          }
+
           $metricFiles = Get-ChildItem -Path '$(Pipeline.Workspace)\ci-metrics' -Recurse -Filter '*.prom'
+          if (-not $metricFiles) {
+            throw 'No .prom metric files were downloaded for PROD.'
+          }
+
           foreach ($file in $metricFiles) {
             $job = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-            Invoke-WebRequest -Uri "http://127.0.0.1:19092/metrics/job/azure-pipelines/environment/prod/source/$job" -Method Post -InFile $file.FullName -ContentType 'text/plain'
+            $body = [System.IO.File]::ReadAllText($file.FullName)
+            $body = $body.Replace("`r`n", "`n").Replace("`r", "`n")
+            if (-not $body.EndsWith("`n")) {
+              $body += "`n"
+            }
+            Invoke-WebRequest `
+              -Uri "http://127.0.0.1:19092/metrics/job/azure-pipelines/environment/prod/source/$job" `
+              -Method Post `
+              -Body $body `
+              -ContentType 'text/plain; version=0.0.4' `
+              -UseBasicParsing
           }
         }
         finally {
           Stop-Process -Id $portForward.Id -Force -ErrorAction SilentlyContinue
+          Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
         }
       displayName: Publish PROD monitoring metrics
 
