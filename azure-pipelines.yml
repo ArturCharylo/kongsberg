@@ -671,11 +671,28 @@ stages:
       displayName: Deploy DEV with Helm
 
     - powershell: |
-        kubectl rollout status deployment/api --namespace dev --timeout=300s
-        kubectl rollout status deployment/frontend --namespace dev --timeout=300s
-        kubectl rollout status deployment/postgres --namespace dev --timeout=300s
-        kubectl rollout status deployment/prometheus --namespace dev --timeout=300s
-        kubectl rollout status deployment/grafana --namespace dev --timeout=300s
+        $ErrorActionPreference = 'Stop'
+        $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
+
+        try {
+          foreach ($deployment in $deployments) {
+            kubectl rollout status "deployment/$deployment" --namespace dev --timeout=300s
+          }
+        }
+        catch {
+          Write-Host "Rollout failed. Collecting diagnostics from namespace dev."
+          kubectl get pods -n dev -o wide
+          kubectl get events -n dev --sort-by=.lastTimestamp
+          foreach ($deployment in $deployments) {
+            kubectl describe deployment $deployment -n dev
+            $pods = kubectl get pods -n dev -l "app=$deployment" -o name
+            foreach ($pod in $pods) {
+              kubectl logs $pod -n dev --all-containers --tail=100 2>$null
+            }
+          }
+          throw
+        }
+
         kubectl get hpa -n dev
       displayName: Verify Rollout
 
@@ -784,11 +801,28 @@ stages:
       displayName: Deploy PROD with Helm
 
     - powershell: |
-        kubectl rollout status deployment/api --namespace prod --timeout=300s
-        kubectl rollout status deployment/frontend --namespace prod --timeout=300s
-        kubectl rollout status deployment/postgres --namespace prod --timeout=300s
-        kubectl rollout status deployment/prometheus --namespace prod --timeout=300s
-        kubectl rollout status deployment/grafana --namespace prod --timeout=300s
+        $ErrorActionPreference = 'Stop'
+        $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
+
+        try {
+          foreach ($deployment in $deployments) {
+            kubectl rollout status "deployment/$deployment" --namespace prod --timeout=300s
+          }
+        }
+        catch {
+          Write-Host "Rollout failed. Collecting diagnostics from namespace prod."
+          kubectl get pods -n prod -o wide
+          kubectl get events -n prod --sort-by=.lastTimestamp
+          foreach ($deployment in $deployments) {
+            kubectl describe deployment $deployment -n prod
+            $pods = kubectl get pods -n prod -l "app=$deployment" -o name
+            foreach ($pod in $pods) {
+              kubectl logs $pod -n prod --all-containers --tail=100 2>$null
+            }
+          }
+          throw
+        }
+
         kubectl get hpa -n prod
       displayName: Verify Rollout
 

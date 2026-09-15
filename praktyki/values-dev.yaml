@@ -13,6 +13,8 @@ frontend:
 postgres:
   image:
     repository: knsberg.azurecr.io/praktyki-postgres
+  auth:
+    password: postgres
 
 prometheus:
   image:
@@ -22,8 +24,6 @@ prometheus:
 grafana:
   image:
     repository: knsberg.azurecr.io/praktyki-grafana
-
-grafana:
   server:
     rootUrl: "http://grafana.local"
     domain: grafana.local
