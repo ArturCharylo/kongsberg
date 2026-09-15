@@ -660,13 +660,9 @@ stages:
     - powershell: |
         helm upgrade --install praktyki-dev `
           "$(Build.SourcesDirectory)\praktyki" `
+          -f "$(Build.SourcesDirectory)\praktyki\values-dev.yaml" `
           --namespace dev `
           --create-namespace `
-          --set api.image.repository=knsberg.azurecr.io/praktyki-api `
-          --set frontend.image.repository=knsberg.azurecr.io/praktyki-frontend `
-          --set postgres.image.repository=knsberg.azurecr.io/praktyki-postgres `
-          --set prometheus.image.repository=knsberg.azurecr.io/praktyki-prom `
-          --set grafana.image.repository=knsberg.azurecr.io/praktyki-grafana `
           --set api.image.tag=$(Build.BuildId) `
           --set frontend.image.tag=$(Build.BuildId) `
           --set postgres.image.tag=$(Build.BuildId) `
@@ -684,7 +680,7 @@ stages:
       displayName: Verify Rollout
 
 # ==================================================
-# PUSH TO DEV
+# PUSH TO PROD
 # ==================================================
 
 - stage: PushProd
@@ -777,13 +773,9 @@ stages:
     - powershell: |
         helm upgrade --install praktyki-prod `
           "$(Build.SourcesDirectory)\praktyki" `
+          -f "$(Build.SourcesDirectory)\praktyki\values-prod.yaml" `
           --namespace prod `
           --create-namespace `
-          --set api.image.repository=kmprod.azurecr.io/praktyki-api `
-          --set frontend.image.repository=kmprod.azurecr.io/praktyki-frontend `
-          --set postgres.image.repository=kmprod.azurecr.io/praktyki-postgres `
-          --set prometheus.image.repository=kmprod.azurecr.io/praktyki-prom `
-          --set grafana.image.repository=kmprod.azurecr.io/praktyki-grafana `
           --set api.image.tag=$(Build.BuildId) `
           --set frontend.image.tag=$(Build.BuildId) `
           --set postgres.image.tag=$(Build.BuildId) `

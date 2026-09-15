@@ -10,4 +10,4 @@ spec:
   - name: http
     port: 3000
     targetPort: http
-    nodePort: 30300
+    nodePort: {{ .Values.grafana.service.nodePort }}

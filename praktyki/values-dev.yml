@@ -1,0 +1,23 @@
+api:
+  image:
+    repository: knsberg.azurecr.io/praktyki-api
+
+frontend:
+  image:
+    repository: knsberg.azurecr.io/praktyki-frontend
+  service:
+    nodePort: 31080
+
+postgres:
+  image:
+    repository: knsberg.azurecr.io/praktyki-postgres
+
+prometheus:
+  image:
+    repository: knsberg.azurecr.io/praktyki-prom
+
+grafana:
+  image:
+    repository: knsberg.azurecr.io/praktyki-grafana
+  service:
+    nodePort: 31300

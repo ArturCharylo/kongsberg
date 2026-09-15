@@ -1,0 +1,24 @@
+api:
+  image:
+    repository: kmprod.azurecr.io/praktyki-api
+
+frontend:
+  image:
+    repository: kmprod.azurecr.io/praktyki-frontend
+
+  service:
+    nodePort: 32080
+
+postgres:
+  image:
+    repository: kmprod.azurecr.io/praktyki-postgres
+
+prometheus:
+  image:
+    repository: kmprod.azurecr.io/praktyki-prom
+
+grafana:
+  image:
+    repository: kmprod.azurecr.io/praktyki-grafana
+  service:
+    nodePort: 32300
