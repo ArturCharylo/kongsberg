@@ -90,6 +90,9 @@ grafana:
     user: admin
     password: change-me
 
+  dashboards:
+    configMapName: grafana-dashboards
+
 ingress:
   enabled: true
 

@@ -13,3 +13,16 @@ data:
         url: http://prometheus:9090
         isDefault: true
         editable: false
+  provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: Kongsberg monitoring
+        orgId: 1
+        folder: Monitoring
+        type: file
+        disableDeletion: false
+        allowUiUpdates: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false

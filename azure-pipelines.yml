@@ -658,6 +658,13 @@ stages:
         DEV_ACR_PASSWORD: $(DEV_ACR_PASSWORD)
 
     - powershell: |
+        kubectl create configmap grafana-dashboards `
+          --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
+          --namespace dev `
+          --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create DEV Grafana Dashboards ConfigMap
+
+    - powershell: |
         helm upgrade --install praktyki-dev `
           "$(Build.SourcesDirectory)\praktyki" `
           -f "$(Build.SourcesDirectory)\praktyki\values-dev.yaml" `
@@ -693,6 +700,7 @@ stages:
           throw
         }
 
+        kubectl exec deployment/grafana --namespace dev -- test -f /var/lib/grafana/dashboards/kongsberg-monitoring.json
         kubectl get hpa -n dev
       displayName: Verify Rollout
 
@@ -788,6 +796,13 @@ stages:
         PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
 
     - powershell: |
+        kubectl create configmap grafana-dashboards `
+          --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
+          --namespace prod `
+          --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create PROD Grafana Dashboards ConfigMap
+
+    - powershell: |
         helm upgrade --install praktyki-prod `
           "$(Build.SourcesDirectory)\praktyki" `
           -f "$(Build.SourcesDirectory)\praktyki\values-prod.yaml" `
@@ -823,6 +838,7 @@ stages:
           throw
         }
 
+        kubectl exec deployment/grafana --namespace prod -- test -f /var/lib/grafana/dashboards/kongsberg-monitoring.json
         kubectl get hpa -n prod
       displayName: Verify Rollout
 

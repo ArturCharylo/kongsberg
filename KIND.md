@@ -90,6 +90,13 @@ Dodaj do `C:\Windows\System32\drivers\etc\hosts` (z uprawnieniami administratora
 ## 6. Wdrozenie
 
 ```powershell
+kubectl create namespace kind --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create configmap grafana-dashboards `
+  --from-file=kongsberg-monitoring.json=.\monitoring\dashboards\kongsberg-monitoring.json `
+  --namespace kind `
+  --dry-run=client -o yaml | kubectl apply -f -
+
 helm upgrade --install praktyki-kind .\praktyki `
   --namespace kind `
   --create-namespace `
@@ -123,7 +130,11 @@ curl.exe -H "Host: frontend.local" http://127.0.0.1/
 curl.exe -H "Host: api.local" http://127.0.0.1/health
 curl.exe -H "Host: grafana.local" http://127.0.0.1/api/health
 curl.exe -H "Host: prometheus.local" http://127.0.0.1/-/ready
+kubectl exec deployment/grafana -n kind -- test -f /var/lib/grafana/dashboards/kongsberg-monitoring.json
+curl.exe -u admin:change-me -H "Host: grafana.local" http://127.0.0.1/api/search
 ```
+
+Dashboard jest wczytywany z ConfigMap przez Grafana provisioning, a jego stan jest zapisywany w PVC `grafana-data`.
 
 ## Diagnostyka frontendu
 

@@ -48,6 +48,11 @@ spec:
         - name: config
           mountPath: /etc/grafana/provisioning/datasources/prometheus.yml
           subPath: prometheus.yml
+        - name: config
+          mountPath: /etc/grafana/provisioning/dashboards/provider.yml
+          subPath: provider.yml
+        - name: dashboards
+          mountPath: /var/lib/grafana/dashboards
         readinessProbe:
           httpGet:
             path: /api/health
@@ -68,3 +73,6 @@ spec:
       - name: config
         configMap:
           name: grafana-config
+      - name: dashboards
+        configMap:
+          name: {{ .Values.grafana.dashboards.configMapName }}
