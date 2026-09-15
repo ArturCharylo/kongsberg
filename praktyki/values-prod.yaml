@@ -4,7 +4,7 @@ imagePullSecrets:
 api:
   image:
     repository: kmprod.azurecr.io/praktyki-api
-  frontendOrigin: "https://frontend.local"
+  frontendOrigin: "http://frontend.prod.local"
 
 frontend:
   image:
@@ -17,17 +17,22 @@ postgres:
 prometheus:
   image:
     repository: kmprod.azurecr.io/praktyki-prom
-  externalUrl: "https://prometheus.local"
+  externalUrl: "http://prometheus.prod.local"
 
 grafana:
   image:
     repository: kmprod.azurecr.io/praktyki-grafana
 
   server:
-    rootUrl: "https://grafana.local"
-    domain: grafana.local
+    rootUrl: "http://grafana.prod.local"
+    domain: grafana.prod.local
 
 ingress:
+  hosts:
+    frontend: frontend.prod.local
+    api: api.prod.local
+    grafana: grafana.prod.local
+    prometheus: prometheus.prod.local
   tls:
     enabled: false
     secretName: praktyki-tls

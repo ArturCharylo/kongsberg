@@ -102,6 +102,8 @@ W profilu Kind TLS jest wylaczony, a terminacja ruchu odbywa sie na HTTP Ingress
 
 Profil `values-prod.yaml` celowo pozostawia TLS wylaczony, poniewaz hosty `.local` nie moga otrzymac certyfikatu Let's Encrypt. Po ustawieniu publicznych nazw DNS wlacz TLS i cert-managera przez osobny plik values, na przyklad:
 
+Profile CI uzywaja odrebnych hostow, aby ingress-nginx nie odrzucal identycznych par host/path w roznych namespace'ach: `*.dev.local` dla DEV oraz `*.prod.local` dla PROD. W klastrze z dostepem do tych srodowisk skonfiguruj odpowiednie rekordy DNS albo wpisy w pliku hosts.
+
 ```powershell
 helm upgrade --install praktyki-prod .\praktyki `
   --namespace prod `
