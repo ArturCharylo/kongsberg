@@ -590,7 +590,7 @@ stages:
         $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
         $requiredHosts = @('frontend.dev.local', 'api.dev.local', 'grafana.dev.local', 'prometheus.dev.local')
         foreach ($dnsName in $requiredHosts) {
-          $hostPattern = :Escape($dnsName)
+          $hostPattern = [regex]::Escape($dnsName)
 
           if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and
               $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
@@ -856,10 +856,10 @@ stages:
         $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
         $requiredHosts = @('frontend.prod.local', 'api.prod.local', 'grafana.prod.local', 'prometheus.prod.local')
         foreach ($dnsName in $requiredHosts) {
-          $hostPattern = :Escape($dnsName)
+          $hostPattern = [regex]::Escape($dnsName)
 
           if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and
-              $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
+              $sanText -notmatch 'DNS:\*\.prod\.local(,|\s|$)') {
 
             throw "The Key Vault certificate does not contain a SAN for $dnsName."
           }
