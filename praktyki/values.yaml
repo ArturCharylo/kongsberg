@@ -121,6 +121,7 @@ ingress:
   tls:
     enabled: false
     secretName: praktyki-tls
+    redirectHttp: true
 
   certManager:
     enabled: false

@@ -4,7 +4,7 @@ imagePullSecrets:
 api:
   image:
     repository: knsberg.azurecr.io/praktyki-api
-  frontendOrigin: "http://frontend.dev.local"
+  frontendOrigin: "https://frontend.dev.local"
 
 frontend:
   image:
@@ -19,13 +19,13 @@ postgres:
 prometheus:
   image:
     repository: knsberg.azurecr.io/praktyki-prom
-  externalUrl: "http://prometheus.dev.local"
+  externalUrl: "https://prometheus.dev.local"
 
 grafana:
   image:
     repository: knsberg.azurecr.io/praktyki-grafana
   server:
-    rootUrl: "http://grafana.dev.local"
+    rootUrl: "https://grafana.dev.local"
     domain: grafana.dev.local
 
 ingress:
@@ -34,3 +34,7 @@ ingress:
     api: api.dev.local
     grafana: grafana.dev.local
     prometheus: prometheus.dev.local
+  tls:
+    enabled: true
+    secretName: praktyki-tls
+    redirectHttp: true

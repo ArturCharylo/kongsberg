@@ -107,9 +107,11 @@ kubectl get ingress,svc,pods -n kind
 
 W profilu Kind TLS jest wylaczony, a terminacja ruchu odbywa sie na HTTP Ingress. Dla produkcji uzyj `values-prod.yaml`, cert-managera oraz prawdziwego DNS/certyfikatu.
 
-Profil `values-prod.yaml` celowo pozostawia TLS wylaczony, poniewaz hosty `.local` nie moga otrzymac certyfikatu Let's Encrypt. Po ustawieniu publicznych nazw DNS wlacz TLS i cert-managera przez osobny plik values, na przyklad:
+Profil Kind pozostaje HTTP-only. Profil `values-prod.yaml` wlacza TLS, ale wymaga certyfikatu dostarczonego przez pipeline, poniewaz hosty `.local` nie moga otrzymac certyfikatu Let's Encrypt.
 
 Profile CI uzywaja odrebnych hostow, aby ingress-nginx nie odrzucal identycznych par host/path w roznych namespace'ach: `*.dev.local` dla DEV oraz `*.prod.local` dla PROD. W klastrze z dostepem do tych srodowisk skonfiguruj odpowiednie rekordy DNS albo wpisy w pliku hosts.
+
+Pipeline pobiera sekret `delivery` z Azure Key Vault jako base64 PFX, wyciaga certyfikat, lancuch i klucz prywatny, sprawdza SAN-y oraz tworzy idempotentny sekret `praktyki-tls` przed wdrozeniem Helm. Wildcard `*.dev.local` lub `*.prod.local` obejmuje tylko jeden poziom nazwy. Certyfikat zawierajacy tylko `localhost` nie pasuje do tych hostow, nawet jesli jest zaufany w Windows.
 
 ```powershell
 helm upgrade --install praktyki-prod .\praktyki `
@@ -133,6 +135,18 @@ curl.exe -H "Host: prometheus.local" http://127.0.0.1/-/ready
 kubectl exec deployment/grafana -n kind -- test -f /var/lib/grafana/dashboards/kongsberg-monitoring.json
 curl.exe -u admin:change-me -H "Host: grafana.local" http://127.0.0.1/api/search
 ```
+
+Po wdrozeniu DEV sprawdz sekret, SAN-y i odpowiedz HTTPS:
+
+```powershell
+kubectl get secret praktyki-tls -n dev -o jsonpath='{.type}{"\n"}'
+kubectl get secret praktyki-tls -n dev -o jsonpath='{.data.tls\.crt}' | %{ [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($_)) } | openssl x509 -noout -subject -issuer -ext subjectAltName
+curl.exe --resolve frontend.dev.local:443:127.0.0.1 https://frontend.dev.local/
+curl.exe --resolve api.dev.local:443:127.0.0.1 https://api.dev.local/health
+start https://frontend.dev.local/
+```
+
+Powtorz polecenia z `-n prod` i nazwami `*.prod.local` dla PROD. Przegladarka musi rozpoznawac nazwe DNS z SAN certyfikatu, a DNS lub plik `hosts` musi kierowac te nazwy na ingress-nginx.
 
 Dashboard jest wczytywany z ConfigMap przez Grafana provisioning, a jego stan jest zapisywany w PVC `grafana-data`. Metryki CI są wysyłane do Pushgateway i trwale przechowywane w PVC `pushgateway-data`.
 

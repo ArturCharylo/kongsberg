@@ -33,99 +33,6 @@ stages:
       name: Default
 
     steps:
-
-    - task: AzureKeyVault@2
-      displayName: Download certificate from Key Vault
-      inputs:
-        azureSubscription: 'key-vault'
-        KeyVaultName: 'kongsberg'
-        SecretsFilter: 'delivery'
-        RunAsPreJob: true
-
-    - powershell: |
-        $secret = "$(delivery)"
-
-        Write-Host "Length: $($secret.Length)"
-
-        if ($secret.Length -gt 20)
-        {
-          Write-Host "Prefix:"
-          Write-Host $secret.Substring(0,20)
-        }
-      displayName: Inspect secret
-
-    - powershell: |
-        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-
-        New-Item -ItemType Directory -Force -Path $certDir
-
-        [System.IO.File]::WriteAllBytes(
-          "$certDir\delivery.pfx",
-          [System.Convert]::FromBase64String("$(delivery)")
-        )
-
-        Get-ChildItem $certDir
-      displayName: Save PFX
-
-    - powershell: |
-        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-
-        openssl pkcs12 `
-          -in "$certDir\delivery.pfx" `
-          -clcerts `
-          -nokeys `
-          -out "$certDir\delivery.crt" `
-          -passin pass:
-
-        openssl pkcs12 `
-          -in "$certDir\delivery.pfx" `
-          -cacerts `
-          -nokeys `
-          -out "$certDir\Artur.crt" `
-          -passin pass:
-
-        Get-Content `
-          "$certDir\delivery.crt",
-          "$certDir\Artur.crt" |
-        Set-Content "$certDir\fullchain.crt"
-      displayName: Extract Full Chain
-
-    - powershell: |
-        dir "$(Build.SourcesDirectory)\km_Praktyki\certs"
-        Get-Content "$(Build.SourcesDirectory)\km_Praktyki\certs\delivery.crt" -Head 5
-      displayName: Check certs
-
-    - powershell: |
-        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-
-        openssl pkcs12 `
-          -in "$certDir\delivery.pfx" `
-          -nocerts `
-          -nodes `
-          -out "$certDir\delivery.key" `
-          -passin pass:
-
-        if ($LASTEXITCODE -ne 0)
-        {
-          throw "KEY extraction failed"
-        }
-      displayName: Extract KEY
-
-    - powershell: |
-        $certDir = "$(Build.SourcesDirectory)\km_Praktyki\certs"
-
-        Write-Host "Certificate directory contents:"
-        Get-ChildItem $certDir
-
-        Test-Path "$certDir\delivery.crt"
-        Test-Path "$certDir\delivery.key"
-
-        openssl x509 `
-          -in "$certDir\delivery.crt" `
-          -noout `
-          -subject
-      displayName: Verify certificate
-
     - powershell: |
         docker compose -p km-praktyki build --pull
 
@@ -657,6 +564,45 @@ stages:
         DEV_ACR_USERNAME: $(DEV_ACR_USERNAME)
         DEV_ACR_PASSWORD: $(DEV_ACR_PASSWORD)
 
+    - task: AzureKeyVault@2
+      displayName: Download DEV ingress certificate from Key Vault
+      inputs:
+        azureSubscription: 'key-vault'
+        KeyVaultName: 'kongsberg'
+        SecretsFilter: 'ingress-tls'
+        RunAsPreJob: false
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'praktyki-dev-tls'
+        New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+        $pfxPath = Join-Path $certDir 'ingress-tls.pfx'
+        [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
+
+        openssl pkcs12 -in $pfxPath -clcerts -nokeys -out (Join-Path $certDir 'ingress.crt') -passin pass:
+        openssl pkcs12 -in $pfxPath -cacerts -nokeys -out (Join-Path $certDir 'chain.crt') -passin pass:
+        openssl pkcs12 -in $pfxPath -nocerts -nodes -out (Join-Path $certDir 'ingress.key') -passin pass:
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to extract the DEV certificate or private key from the Key Vault PFX.' }
+
+        $fullChain = Join-Path $certDir 'fullchain.crt'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
+        $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
+        $requiredHosts = @('frontend.dev.local', 'api.dev.local', 'grafana.dev.local', 'prometheus.dev.local')
+        foreach ($host in $requiredHosts) {
+          $hostPattern = [regex]::Escape($host)
+          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and $sanText -notmatch 'DNS:\*\.dev\.local(,|\s|$)') {
+            throw "The Key Vault certificate does not contain a SAN for $host. A localhost-only certificate cannot terminate TLS for this ingress host."
+          }
+        }
+
+        $certModulus = (openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -modulus).Trim()
+        $keyModulus = (openssl rsa -in (Join-Path $certDir 'ingress.key') -noout -modulus 2>$null).Trim()
+        if ($certModulus -ne $keyModulus) { throw 'The DEV certificate and private key do not match.' }
+
+        kubectl create secret tls praktyki-tls --namespace dev --cert=$fullChain --key="$(Join-Path $certDir 'ingress.key')" --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create or update DEV TLS secret
+
     - powershell: |
         kubectl create configmap grafana-dashboards `
           --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
@@ -880,6 +826,45 @@ stages:
       env:
         PROD_ACR_USERNAME: $(PROD_ACR_USERNAME)
         PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
+
+    - task: AzureKeyVault@2
+      displayName: Download PROD ingress certificate from Key Vault
+      inputs:
+        azureSubscription: 'key-vault'
+        KeyVaultName: 'kongsberg'
+        SecretsFilter: 'ingress-tls'
+        RunAsPreJob: false
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'praktyki-prod-tls'
+        New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+        $pfxPath = Join-Path $certDir 'ingress-tls.pfx'
+        [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
+
+        openssl pkcs12 -in $pfxPath -clcerts -nokeys -out (Join-Path $certDir 'ingress.crt') -passin pass:
+        openssl pkcs12 -in $pfxPath -cacerts -nokeys -out (Join-Path $certDir 'chain.crt') -passin pass:
+        openssl pkcs12 -in $pfxPath -nocerts -nodes -out (Join-Path $certDir 'ingress.key') -passin pass:
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to extract the PROD certificate or private key from the Key Vault PFX.' }
+
+        $fullChain = Join-Path $certDir 'fullchain.crt'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
+        $sanText = openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName
+        $requiredHosts = @('frontend.prod.local', 'api.prod.local', 'grafana.prod.local', 'prometheus.prod.local')
+        foreach ($host in $requiredHosts) {
+          $hostPattern = [regex]::Escape($host)
+          if ($sanText -notmatch "DNS:$hostPattern(,|\s|$)" -and $sanText -notmatch 'DNS:\*\.prod\.local(,|\s|$)') {
+            throw "The Key Vault certificate does not contain a SAN for $host. A localhost-only certificate cannot terminate TLS for this ingress host."
+          }
+        }
+
+        $certModulus = (openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -modulus).Trim()
+        $keyModulus = (openssl rsa -in (Join-Path $certDir 'ingress.key') -noout -modulus 2>$null).Trim()
+        if ($certModulus -ne $keyModulus) { throw 'The PROD certificate and private key do not match.' }
+
+        kubectl create secret tls praktyki-tls --namespace prod --cert=$fullChain --key="$(Join-Path $certDir 'ingress.key')" --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create or update PROD TLS secret
 
     - task: DownloadBuildArtifacts@1
       displayName: Download PROD monitoring metrics
