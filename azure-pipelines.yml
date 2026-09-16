@@ -614,6 +614,19 @@ stages:
           --dry-run=client -o yaml | kubectl apply -f -
       displayName: Create DEV Grafana Dashboards ConfigMap
 
+    - powershell: |
+        if ([string]::IsNullOrWhiteSpace($env:AZURE_DEVOPS_PAT) -or $env:AZURE_DEVOPS_PAT -like '$(*') {
+          throw "AZURE_DEVOPS_PAT is missing. Define it as a secret variable in the km variable group."
+        }
+
+        kubectl create secret generic grafana-alerting `
+          --from-literal=azure-devops-pat="$env:AZURE_DEVOPS_PAT" `
+          --namespace dev `
+          --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create DEV Grafana Alerting Secret
+      env:
+        AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)
+
     - task: DownloadBuildArtifacts@1
       displayName: Download DEV monitoring metrics
       inputs:
@@ -904,6 +917,19 @@ stages:
           --namespace prod `
           --dry-run=client -o yaml | kubectl apply -f -
       displayName: Create PROD Grafana Dashboards ConfigMap
+
+    - powershell: |
+        if ([string]::IsNullOrWhiteSpace($env:AZURE_DEVOPS_PAT) -or $env:AZURE_DEVOPS_PAT -like '$(*') {
+          throw "AZURE_DEVOPS_PAT is missing. Define it as a secret variable in the km variable group."
+        }
+
+        kubectl create secret generic grafana-alerting `
+          --from-literal=azure-devops-pat="$env:AZURE_DEVOPS_PAT" `
+          --namespace prod `
+          --dry-run=client -o yaml | kubectl apply -f -
+      displayName: Create PROD Grafana Alerting Secret
+      env:
+        AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)
 
     - powershell: |
         helm upgrade --install praktyki-prod `

@@ -18,25 +18,29 @@ The PAT must be allowed to run pipeline 3 in project `kongsberg`.
 
 ## Helm / Kubernetes
 
-Paste the PAT only where marked below. Run this command in the target namespace:
+For the CI/CD deployment, add a secret variable named `AZURE_DEVOPS_PAT` to the existing Azure DevOps variable group `km`. Mark it as secret. The pipeline creates the Kubernetes Secret automatically in both `dev` and `prod`.
+
+For a manual deployment, paste the PAT only where marked below and run the command in the target namespace:
 
 ```powershell
 kubectl create secret generic grafana-alerting `
   --from-literal=azure-devops-pat='PASTE_YOUR_PAT_HERE' `
-  --namespace default
+  --namespace dev
 ```
 
 Replace `PASTE_YOUR_PAT_HERE` with the PAT value. Do not put it in `values.yaml`, `alerting.yml`, or the pipeline URL.
 
 For the Helm deployment, the default `grafana.alerting.existingSecret` value is `grafana-alerting`. If another Secret name is used, set it with `--set grafana.alerting.existingSecret=<secret-name>`.
 
-For the plain `k8s` deployment, the Secret must be named `grafana-alerting` and contain the key `azure-devops-pat`.
+Use `--namespace prod` for the production release. For Kind use `--namespace kind`. The plain `k8s` deployment also expects a Secret named `grafana-alerting` containing the key `azure-devops-pat`.
 
 After creating or changing the Secret, restart Grafana:
 
 ```powershell
-kubectl rollout restart deployment/grafana --namespace default
+kubectl rollout restart deployment/grafana --namespace dev
 ```
+
+Use the matching namespace (`kind` or `prod`) when applicable.
 
 ## Docker Compose
 
