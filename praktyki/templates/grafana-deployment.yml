@@ -42,6 +42,11 @@ spec:
           value: {{ .Values.grafana.server.rootUrl | quote }}
         - name: GF_SERVER_DOMAIN
           value: {{ .Values.grafana.server.domain | quote }}
+        - name: AZURE_DEVOPS_PAT
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.grafana.alerting.existingSecret | default "grafana-alerting" }}
+              key: azure-devops-pat
         volumeMounts:
         - name: data
           mountPath: /var/lib/grafana
@@ -51,6 +56,9 @@ spec:
         - name: config
           mountPath: /etc/grafana/provisioning/dashboards/provider.yml
           subPath: provider.yml
+        - name: config
+          mountPath: /etc/grafana/provisioning/alerting/alerting.yml
+          subPath: alerting.yml
         - name: dashboards
           mountPath: /var/lib/grafana/dashboards
         readinessProbe:

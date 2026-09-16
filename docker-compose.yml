@@ -67,6 +67,8 @@ services:
     image: grafana/grafana-enterprise:latest
     container_name: grafana
     restart: unless-stopped
+    environment:
+      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
     ports:
       - '3000:3000'
     volumes:
@@ -74,6 +76,7 @@ services:
       - ./monitoring/dashboards:/var/lib/grafana/dashboards:ro
       - ./monitoring/dashboards/provider.yml:/etc/grafana/provisioning/dashboards/provider.yml:ro
       - ./monitoring/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/alerting:/etc/grafana/provisioning/alerting:ro
     depends_on:
       - prometheus
 

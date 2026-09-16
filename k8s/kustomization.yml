@@ -17,5 +17,6 @@ resources:
 - prometheus-service.yml
 - grafana-pvc.yml
 - grafana-config.yml
+- grafana-alerting.yml
 - grafana-deployment.yml
 - grafana-service.yml

@@ -30,12 +30,20 @@ spec:
           value: admin
         - name: GF_METRICS_ENABLED
           value: "true"
+        - name: AZURE_DEVOPS_PAT
+          valueFrom:
+            secretKeyRef:
+              name: grafana-alerting
+              key: azure-devops-pat
         volumeMounts:
         - name: data
           mountPath: /var/lib/grafana
         - name: config
           mountPath: /etc/grafana/provisioning/datasources/prometheus.yml
           subPath: prometheus.yml
+        - name: alerting
+          mountPath: /etc/grafana/provisioning/alerting/alerting.yml
+          subPath: alerting.yml
         readinessProbe:
           httpGet:
             path: /api/health
@@ -56,3 +64,6 @@ spec:
       - name: config
         configMap:
           name: grafana-config
+      - name: alerting
+        configMap:
+          name: grafana-alerting

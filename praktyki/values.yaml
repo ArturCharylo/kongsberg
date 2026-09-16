@@ -103,6 +103,9 @@ grafana:
     user: admin
     password: change-me
 
+  alerting:
+    existingSecret: grafana-alerting
+
   dashboards:
     configMapName: grafana-dashboards
 

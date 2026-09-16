@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alerting
+data:
+  alerting.yml: |
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: azure-devops-pipeline
+        receivers:
+          - uid: azure-devops-pipeline
+            type: webhook
+            disableResolveMessage: true
+            settings:
+              url: https://dev.azure.com/arturcha/kongsberg/_apis/pipelines/3/runs?api-version=7.2-preview.1
+              httpMethod: POST
+              username: ""
+              password: $AZURE_DEVOPS_PAT
+              maxAlerts: "10"
+    policies:
+      - orgId: 1
+        receiver: azure-devops-pipeline
+        group_by:
+          - alertname
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+        routes:
+          - receiver: azure-devops-pipeline
+            object_matchers:
+              - ["azure_pipeline", "=", "true"]
+            group_by:
+              - alertname
+            group_wait: 30s
+            group_interval: 5m
+            repeat_interval: 4h
+    groups:
+      - orgId: 1
+        name: kongsberg-infrastructure
+        folder: Monitoring
+        interval: 1m
+        rules:
+          - uid: api-down
+            title: API is down
+            condition: C
+            for: 2m
+            noDataState: Alerting
+            execErrState: Alerting
+            labels:
+              severity: critical
+              azure_pipeline: "true"
+            annotations:
+              summary: Kongsberg API is unavailable
+              description: No healthy API instance has been scraped for at least two minutes.
+            data:
+              - refId: A
+                datasourceUid: prometheus
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                model:
+                  expr: min(up{job="api"})
+                  instant: true
+                  refId: A
+              - refId: B
+                datasourceUid: __expr__
+                model:
+                  expression: A
+                  reducer: last
+                  type: reduce
+                  refId: B
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  expression: B
+                  conditions:
+                    - evaluator:
+                        params: [1]
+                        type: lt
+                      operator:
+                        type: and
+                      query:
+                        params: [B]
+                      reducer:
+                        type: last
+                      type: query
+                  type: threshold
+                  refId: C
+          - uid: critical-vulnerabilities
+            title: Critical vulnerabilities detected
+            condition: C
+            for: 5m
+            noDataState: OK
+            execErrState: Alerting
+            labels:
+              severity: critical
+              azure_pipeline: "true"
+            annotations:
+              summary: Critical image vulnerabilities detected
+              description: Trivy reports at least one critical vulnerability in a monitored image.
+            data:
+              - refId: A
+                datasourceUid: prometheus
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                model:
+                  expr: sum(trivy_vulnerabilities_total{severity="critical"})
+                  instant: true
+                  refId: A
+              - refId: B
+                datasourceUid: __expr__
+                model:
+                  expression: A
+                  reducer: last
+                  type: reduce
+                  refId: B
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  expression: B
+                  conditions:
+                    - evaluator:
+                        params: [0]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [B]
+                      reducer:
+                        type: last
+                      type: query
+                  type: threshold
+                  refId: C
+          - uid: high-vulnerabilities
+            title: High vulnerabilities detected
+            condition: C
+            for: 5m
+            noDataState: OK
+            execErrState: Alerting
+            labels:
+              severity: warning
+              azure_pipeline: "true"
+            annotations:
+              summary: High image vulnerabilities detected
+              description: Trivy reports at least one high vulnerability in a monitored image.
+            data:
+              - refId: A
+                datasourceUid: prometheus
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                model:
+                  expr: sum(trivy_vulnerabilities_total{severity="high"})
+                  instant: true
+                  refId: A
+              - refId: B
+                datasourceUid: __expr__
+                model:
+                  expression: A
+                  reducer: last
+                  type: reduce
+                  refId: B
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  expression: B
+                  conditions:
+                    - evaluator:
+                        params: [0]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [B]
+                      reducer:
+                        type: last
+                      type: query
+                  type: threshold
+                  refId: C

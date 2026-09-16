@@ -1,3 +1,5 @@
+import argparse
+import os
 import random
 import threading
 import time
@@ -5,96 +7,126 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-BASE_URL = "http://localhost:8000"
-
 stop_event = threading.Event()
+stats_lock = threading.Lock()
+stats = {
+    "requests": 0,
+    "errors": 0,
+    "status_codes": {},
+}
 
 
-def create_text():
+def record_response(status_code: int | None = None, error: bool = False) -> None:
+    with stats_lock:
+        stats["requests"] += 1
+        if error:
+            stats["errors"] += 1
+        elif status_code is not None:
+            status_codes = stats["status_codes"]
+            status_codes[status_code] = status_codes.get(status_code, 0) + 1
+
+
+def request(method: str, url: str, timeout: float, **kwargs) -> requests.Response | None:
     try:
-        requests.post(
-            f"{BASE_URL}/api/texts",
-            json={"content": f"Test {time.time()}"},
-            timeout=5,
-        )
-    except Exception as e:
-        print(f"POST error: {e}")
+        response = requests.request(method, url, timeout=timeout, **kwargs)
+        record_response(response.status_code)
+        return response
+    except requests.RequestException:
+        record_response(error=True)
+        return None
 
 
-def list_texts():
-    try:
-        requests.get(
-            f"{BASE_URL}/api/texts",
-            timeout=5,
-        )
-    except Exception as e:
-        print(f"GET error: {e}")
-
-
-def generate_404():
-    requests.delete(
-        f"{BASE_URL}/api/texts/999999",
-        timeout=5,
+def create_text(base_url: str, timeout: float) -> None:
+    request(
+        "POST",
+        f"{base_url}/api/texts",
+        timeout,
+        json={"content": f"Stress test {time.time()}"},
     )
 
 
-def generate_400():
-    requests.post(
-        f"{BASE_URL}/api/texts",
-        json={"content": "   "},
-        timeout=5,
-    )
+def list_texts(base_url: str, timeout: float) -> requests.Response | None:
+    return request("GET", f"{base_url}/api/texts", timeout)
 
 
-def delete_random_text():
+def generate_404(base_url: str, timeout: float) -> None:
+    request("DELETE", f"{base_url}/api/texts/999999", timeout)
+
+
+def generate_400(base_url: str, timeout: float) -> None:
+    request("POST", f"{base_url}/api/texts", timeout, json={"content": "   "})
+
+
+def delete_random_text(base_url: str, timeout: float) -> None:
+    response = list_texts(base_url, timeout)
+    if response is None or not response.ok:
+        return
+
     try:
-        response = requests.get(
-            f"{BASE_URL}/api/texts",
-            timeout=5,
-        )
+        items = response.json()
+    except ValueError:
+        return
 
-        if response.ok and response.json():
-            item = random.choice(response.json())
-            requests.delete(
-                f"{BASE_URL}/api/texts/{item['id']}",
-                timeout=5,
-            )
-
-    except Exception as e:
-        print(f"DELETE error: {e}")
+    if items:
+        item = random.choice(items)
+        request("DELETE", f"{base_url}/api/texts/{item['id']}", timeout)
 
 
-def worker():
+def worker(base_url: str, timeout: float, pause: float) -> None:
     actions = [
-        (list_texts, 0.7),
-        (create_text, 0.2),
-        (delete_random_text, 0.1),
-        (generate_404, 0.05),
-        (generate_400, 0.05),
+        (list_texts, 0.70),
+        (create_text, 0.20),
+        (delete_random_text, 0.05),
+        (generate_404, 0.025),
+        (generate_400, 0.025),
     ]
 
     while not stop_event.is_set():
-        action = random.choices(
-            [a[0] for a in actions],
-            weights=[a[1] for a in actions],
-        )[0]
+        action = random.choices(*zip(*actions))[0]
+        action(base_url, timeout)
+        stop_event.wait(pause)
 
-        action()
 
-        time.sleep(0.1)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate traffic for API autoscaling tests.")
+    parser.add_argument(
+        "--url",
+        default=os.getenv("STRESS_BASE_URL", "http://localhost:8000"),
+        help="API base URL (default: %(default)s)",
+    )
+    parser.add_argument("--workers", type=int, default=20, help="Number of concurrent workers")
+    parser.add_argument("--duration", type=float, default=60, help="Test duration in seconds")
+    parser.add_argument("--pause", type=float, default=0.1, help="Pause between requests")
+    parser.add_argument("--timeout", type=float, default=5, help="Request timeout in seconds")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.workers < 1 or args.duration <= 0 or args.pause < 0 or args.timeout <= 0:
+        raise SystemExit("workers must be >= 1; duration and timeout > 0; pause >= 0")
+
+    base_url = args.url.rstrip("/")
+    print(f"Generating traffic against {base_url} with {args.workers} workers for {args.duration:g}s")
+
+    executor = ThreadPoolExecutor(max_workers=args.workers)
+    try:
+        for _ in range(args.workers):
+            executor.submit(worker, base_url, args.timeout, args.pause)
+        time.sleep(args.duration)
+    except KeyboardInterrupt:
+        print("Stopping early...")
+    finally:
+        stop_event.set()
+        executor.shutdown(wait=True)
+
+    with stats_lock:
+        status_codes = ", ".join(
+            f"{status}: {count}" for status, count in sorted(stats["status_codes"].items())
+        ) or "none"
+        print(f"Requests: {stats['requests']}; errors: {stats['errors']}; status codes: {status_codes}")
+    print("Done")
 
 
 if __name__ == "__main__":
-    threads = 20
-    duration = 60
-
-    print(f"Generating traffic with {threads} workers for {duration}s")
-
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        for _ in range(threads):
-            executor.submit(worker)
-
-        time.sleep(duration)
-        stop_event.set()
-
-    print("Done")
+    main()

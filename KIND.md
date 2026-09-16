@@ -79,6 +79,33 @@ kind load docker-image praktyki-api:local praktyki-frontend:local --name praktyk
 
 Obrazy PostgreSQL, Prometheusa i Grafany sa pobierane z publicznych rejestrow.
 
+## Test autoscalingu
+
+Uruchom generator ruchu z katalogu repozytorium. Domyslnie wysyla on mieszany ruch GET/POST/DELETE przez 60 sekund do lokalnego API:
+
+```powershell
+python .\backend\stress_test.py
+```
+
+Przy wdrozeniu w Kind skieruj ruch na Ingress i zwieksz obciazenie:
+
+```powershell
+python .\backend\stress_test.py `
+  --url http://api.local `
+  --workers 50 `
+  --duration 300 `
+  --pause 0.05
+```
+
+Po uruchomieniu obserwuj repliki i metryki:
+
+```powershell
+kubectl get hpa,pods -n kind -w
+kubectl top pods -n kind
+```
+
+Skrypt obsluguje takze `STRESS_BASE_URL`, `--timeout` oraz wyswietla liczbe zadan, bledow i kodow HTTP po zakonczeniu.
+
 ## 5. Nazwy lokalne
 
 Dodaj do `C:\Windows\System32\drivers\etc\hosts` (z uprawnieniami administratora):
