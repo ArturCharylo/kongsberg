@@ -575,12 +575,34 @@ stages:
     - powershell: |
         $ErrorActionPreference = 'Stop'
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key'), $env:COSIGN_PRIVATE_KEY, $utf8NoBom)
-        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'), $env:COSIGN_PUBLIC_KEY, $utf8NoBom)
-        if (-not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key')) -or
-            -not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'))) {
-          throw 'Cosign key files could not be restored.'
+
+        function Restore-PemSecret {
+          param(
+            [string]$Value,
+            [string]$Path,
+            [string]$Name
+          )
+
+          if ([string]::IsNullOrWhiteSpace($Value)) {
+            throw "$Name is empty. Check the Azure Key Vault secret value."
+          }
+
+          $normalized = $Value.Trim([char]0xFEFF).Trim()
+          $normalized = $normalized -replace '\\r\\n', "`n"
+          $normalized = $normalized -replace '\\n', "`n"
+          $normalized = $normalized -replace '\\r', "`r"
+          $normalized = $normalized -replace "`r`n?", "`n"
+          $normalized = $normalized.Trim()
+
+          if ($normalized -notmatch '(?s)^-----BEGIN [^-]+-----\s+.+?\s+-----END [^-]+-----$') {
+            throw "$Name does not contain a valid PEM block. Store the complete PEM file content in Azure Key Vault."
+          }
+
+          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
         }
+
+        Restore-PemSecret $env:COSIGN_PRIVATE_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key') 'cosign-private-key'
+        Restore-PemSecret $env:COSIGN_PUBLIC_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub') 'cosign-public-key'
       displayName: Restore Cosign signing keys
       env:
         COSIGN_PRIVATE_KEY: $(cosign-private-key)
@@ -929,12 +951,34 @@ stages:
     - powershell: |
         $ErrorActionPreference = 'Stop'
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key'), $env:COSIGN_PRIVATE_KEY, $utf8NoBom)
-        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'), $env:COSIGN_PUBLIC_KEY, $utf8NoBom)
-        if (-not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key')) -or
-            -not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'))) {
-          throw 'Cosign key files could not be restored.'
+
+        function Restore-PemSecret {
+          param(
+            [string]$Value,
+            [string]$Path,
+            [string]$Name
+          )
+
+          if ([string]::IsNullOrWhiteSpace($Value)) {
+            throw "$Name is empty. Check the Azure Key Vault secret value."
+          }
+
+          $normalized = $Value.Trim([char]0xFEFF).Trim()
+          $normalized = $normalized -replace '\\r\\n', "`n"
+          $normalized = $normalized -replace '\\n', "`n"
+          $normalized = $normalized -replace '\\r', "`r"
+          $normalized = $normalized -replace "`r`n?", "`n"
+          $normalized = $normalized.Trim()
+
+          if ($normalized -notmatch '(?s)^-----BEGIN [^-]+-----\s+.+?\s+-----END [^-]+-----$') {
+            throw "$Name does not contain a valid PEM block. Store the complete PEM file content in Azure Key Vault."
+          }
+
+          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
         }
+
+        Restore-PemSecret $env:COSIGN_PRIVATE_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key') 'cosign-private-key'
+        Restore-PemSecret $env:COSIGN_PUBLIC_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub') 'cosign-public-key'
       displayName: Restore Cosign signing keys
       env:
         COSIGN_PRIVATE_KEY: $(cosign-private-key)
