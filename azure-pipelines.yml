@@ -665,6 +665,19 @@ stages:
       displayName: Ensure Cosign is installed
 
     - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $env:DEV_ACR_PASSWORD | docker login knsberg.azurecr.io `
+          --username $env:DEV_ACR_USERNAME `
+          --password-stdin
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Docker login to the DEV ACR failed. Verify the DEV ACR credentials and permissions.'
+        }
+      displayName: Login to DEV ACR for Cosign
+      env:
+        DEV_ACR_USERNAME: $(DEV_ACR_USERNAME)
+        DEV_ACR_PASSWORD: $(DEV_ACR_PASSWORD)
+
+    - powershell: |
         $keyPath = "$(Build.SourcesDirectory)\cosign.key"
         $keyText = Get-Content $keyPath -Raw
         Write-Host "Cosign private key length: $($keyText.Length)"
@@ -689,7 +702,15 @@ stages:
         )
 
         foreach ($image in $images) {
-          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
+          $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
+            throw "Could not resolve a pushed digest for $image."
+          }
+
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $digest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cosign failed to sign $digest."
+          }
         }
       displayName: Sign DEV images with Cosign
       env:
@@ -707,7 +728,15 @@ stages:
 
         try {
           foreach ($image in $images) {
-            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
+            $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
+              throw "Could not resolve a pushed digest for $image."
+            }
+
+            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $digest
+            if ($LASTEXITCODE -ne 0) {
+              throw "Cosign failed to verify $digest."
+            }
           }
         }
         finally {
@@ -1089,6 +1118,19 @@ stages:
       displayName: Ensure Cosign is installed
 
     - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $env:PROD_ACR_PASSWORD | docker login kmprod.azurecr.io `
+          --username $env:PROD_ACR_USERNAME `
+          --password-stdin
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Docker login to the PROD ACR failed. Verify the PROD ACR credentials and permissions.'
+        }
+      displayName: Login to PROD ACR for Cosign
+      env:
+        PROD_ACR_USERNAME: $(PROD_ACR_USERNAME)
+        PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
+
+    - powershell: |
         $keyPath = "$(Build.SourcesDirectory)\cosign.key"
         $keyText = Get-Content $keyPath -Raw
         Write-Host "Cosign private key length: $($keyText.Length)"
@@ -1113,7 +1155,15 @@ stages:
         )
 
         foreach ($image in $images) {
-          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
+          $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
+            throw "Could not resolve a pushed digest for $image."
+          }
+
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $digest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cosign failed to sign $digest."
+          }
         }
       displayName: Sign PROD images with Cosign
       env:
@@ -1131,7 +1181,15 @@ stages:
 
         try {
           foreach ($image in $images) {
-            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
+            $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
+              throw "Could not resolve a pushed digest for $image."
+            }
+
+            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $digest
+            if ($LASTEXITCODE -ne 0) {
+              throw "Cosign failed to verify $digest."
+            }
           }
         }
         finally {
