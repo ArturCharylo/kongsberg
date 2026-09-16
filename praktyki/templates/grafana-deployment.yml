@@ -57,15 +57,17 @@ spec:
           httpGet:
             path: /api/health
             port: http
-          initialDelaySeconds: 20
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
           periodSeconds: 10
+          failureThreshold: 3
         resources:
           requests:
-            cpu: 100m
-            memory: 256Mi
-          limits:
-            cpu: 500m
+            cpu: 200m
             memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
       volumes:
       - name: data
         persistentVolumeClaim:
