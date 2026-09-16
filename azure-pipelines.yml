@@ -653,7 +653,21 @@ stages:
       displayName: Ensure Cosign is installed
 
     - powershell: |
+        $keyPath = "$(Build.SourcesDirectory)\cosign.key"
+        $keyText = Get-Content $keyPath -Raw
+        Write-Host "Cosign private key length: $($keyText.Length)"
+        Write-Host "Cosign private key has PEM header: $($keyText -match '(?m)^-----BEGIN [^-]+-----$')"
+        Write-Host "Cosign private key has PEM footer: $($keyText -match '(?m)^-----END [^-]+-----$')"
+        Write-Host "Cosign private key starts with UTF-8 BOM: $($keyText.Length -gt 0 -and [int][char]$keyText[0] -eq 0xFEFF)"
+      displayName: Debug Cosign key metadata
+
+    - powershell: |
         $ErrorActionPreference = 'Stop'
+        & "$(COSIGN_EXE)" public-key --key "$(Build.SourcesDirectory)\cosign.key" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Cosign could not parse cosign.key. Verify that cosign-private-key contains the complete encrypted cosign.key PEM file.'
+        }
+
         $images = @(
           'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
           'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
@@ -671,11 +685,6 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        & "$(COSIGN_EXE)" public-key --key "$(Build.SourcesDirectory)\cosign.key" | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Cosign could not parse cosign.key. Verify that cosign-private-key contains the complete unencrypted cosign.key PEM file.'
-        }
-
         $images = @(
           'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
           'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
@@ -1054,6 +1063,15 @@ stages:
         Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
         & $cosignPath version
       displayName: Ensure Cosign is installed
+
+    - powershell: |
+        $keyPath = "$(Build.SourcesDirectory)\cosign.key"
+        $keyText = Get-Content $keyPath -Raw
+        Write-Host "Cosign private key length: $($keyText.Length)"
+        Write-Host "Cosign private key has PEM header: $($keyText -match '(?m)^-----BEGIN [^-]+-----$')"
+        Write-Host "Cosign private key has PEM footer: $($keyText -match '(?m)^-----END [^-]+-----$')"
+        Write-Host "Cosign private key starts with UTF-8 BOM: $($keyText.Length -gt 0 -and [int][char]$keyText[0] -eq 0xFEFF)"
+      displayName: Debug Cosign key metadata
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
