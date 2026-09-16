@@ -666,6 +666,8 @@ stages:
           & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
         }
       displayName: Sign DEV images with Cosign
+      env:
+        COSIGN_PASSWORD: $(cosign-password)
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
@@ -1072,6 +1074,8 @@ stages:
           & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
         }
       displayName: Sign PROD images with Cosign
+      env:
+        COSIGN_PASSWORD: $(cosign-password)
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
