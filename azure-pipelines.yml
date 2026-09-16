@@ -614,9 +614,21 @@ stages:
             }
           }
 
-          if ($normalized -notmatch '(?s)^-----BEGIN (?<label>[^-]+)-----\s+.+?\s+-----END \k<label>-----$') {
+          $pem = [regex]::Match(
+            $normalized,
+            '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$'
+          )
+          if (-not $pem.Success) {
             throw "$Name is not a valid PEM block or Base64-wrapped PEM. Store the complete cosign key file content in Azure Key Vault."
           }
+
+          $body = $pem.Groups['body'].Value -replace '\s', ''
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "$Name contains an empty PEM body. Store the complete cosign key file content in Azure Key Vault."
+          }
+
+          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
+          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
 
           [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
         }
@@ -1026,9 +1038,21 @@ stages:
             }
           }
 
-          if ($normalized -notmatch '(?s)^-----BEGIN (?<label>[^-]+)-----\s+.+?\s+-----END \k<label>-----$') {
+          $pem = [regex]::Match(
+            $normalized,
+            '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$'
+          )
+          if (-not $pem.Success) {
             throw "$Name is not a valid PEM block or Base64-wrapped PEM. Store the complete cosign key file content in Azure Key Vault."
           }
+
+          $body = $pem.Groups['body'].Value -replace '\s', ''
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "$Name contains an empty PEM body. Store the complete cosign key file content in Azure Key Vault."
+          }
+
+          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
+          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
 
           [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
         }
