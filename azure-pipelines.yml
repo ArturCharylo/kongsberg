@@ -664,18 +664,11 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed
 
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $env:DEV_ACR_PASSWORD | docker login knsberg.azurecr.io `
-          --username $env:DEV_ACR_USERNAME `
-          --password-stdin
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Docker login to the DEV ACR failed. Verify the DEV ACR credentials and permissions.'
-        }
+    - task: Docker@2
       displayName: Login to DEV ACR for Cosign
-      env:
-        DEV_ACR_USERNAME: $(DEV_ACR_USERNAME)
-        DEV_ACR_PASSWORD: $(DEV_ACR_PASSWORD)
+      inputs:
+        command: login
+        containerRegistry: dev
 
     - powershell: |
         $keyPath = "$(Build.SourcesDirectory)\cosign.key"
@@ -702,6 +695,11 @@ stages:
         )
 
         foreach ($image in $images) {
+          docker pull $image
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not pull the pushed image $image."
+          }
+
           $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
             throw "Could not resolve a pushed digest for $image."
@@ -728,6 +726,11 @@ stages:
 
         try {
           foreach ($image in $images) {
+            docker pull $image
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not pull the pushed image $image."
+            }
+
             $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
               throw "Could not resolve a pushed digest for $image."
@@ -1117,18 +1120,11 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed
 
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $env:PROD_ACR_PASSWORD | docker login kmprod.azurecr.io `
-          --username $env:PROD_ACR_USERNAME `
-          --password-stdin
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Docker login to the PROD ACR failed. Verify the PROD ACR credentials and permissions.'
-        }
+    - task: Docker@2
       displayName: Login to PROD ACR for Cosign
-      env:
-        PROD_ACR_USERNAME: $(PROD_ACR_USERNAME)
-        PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
+      inputs:
+        command: login
+        containerRegistry: prod
 
     - powershell: |
         $keyPath = "$(Build.SourcesDirectory)\cosign.key"
@@ -1155,6 +1151,11 @@ stages:
         )
 
         foreach ($image in $images) {
+          docker pull $image
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not pull the pushed image $image."
+          }
+
           $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
             throw "Could not resolve a pushed digest for $image."
@@ -1181,6 +1182,11 @@ stages:
 
         try {
           foreach ($image in $images) {
+            docker pull $image
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not pull the pushed image $image."
+            }
+
             $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
               throw "Could not resolve a pushed digest for $image."
