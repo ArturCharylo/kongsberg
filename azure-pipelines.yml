@@ -588,14 +588,34 @@ stages:
           }
 
           $normalized = $Value.Trim([char]0xFEFF).Trim()
+          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) {
+            try {
+              $normalized = $normalized | ConvertFrom-Json
+            }
+            catch {
+              throw "$Name is quoted but is not valid JSON string content."
+            }
+          }
           $normalized = $normalized -replace '\\r\\n', "`n"
           $normalized = $normalized -replace '\\n', "`n"
           $normalized = $normalized -replace '\\r', "`r"
           $normalized = $normalized -replace "`r`n?", "`n"
           $normalized = $normalized.Trim()
 
-          if ($normalized -notmatch '(?s)^-----BEGIN [^-]+-----\s+.+?\s+-----END [^-]+-----$') {
-            throw "$Name does not contain a valid PEM block. Store the complete PEM file content in Azure Key Vault."
+          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
+              if ($decoded -match '^-----BEGIN ') {
+                $normalized = $decoded.Trim()
+              }
+            }
+            catch {
+              # The value is neither PEM nor Base64-wrapped PEM.
+            }
+          }
+
+          if ($normalized -notmatch '(?s)^-----BEGIN (?<label>[^-]+)-----\s+.+?\s+-----END \k<label>-----$') {
+            throw "$Name is not a valid PEM block or Base64-wrapped PEM. Store the complete cosign key file content in Azure Key Vault."
           }
 
           [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
@@ -649,6 +669,11 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
+        & "$(COSIGN_EXE)" public-key --key "$(Build.SourcesDirectory)\cosign.key" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Cosign could not parse cosign.key. Verify that cosign-private-key contains the complete unencrypted cosign.key PEM file.'
+        }
+
         $images = @(
           'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
           'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
@@ -964,14 +989,34 @@ stages:
           }
 
           $normalized = $Value.Trim([char]0xFEFF).Trim()
+          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) {
+            try {
+              $normalized = $normalized | ConvertFrom-Json
+            }
+            catch {
+              throw "$Name is quoted but is not valid JSON string content."
+            }
+          }
           $normalized = $normalized -replace '\\r\\n', "`n"
           $normalized = $normalized -replace '\\n', "`n"
           $normalized = $normalized -replace '\\r', "`r"
           $normalized = $normalized -replace "`r`n?", "`n"
           $normalized = $normalized.Trim()
 
-          if ($normalized -notmatch '(?s)^-----BEGIN [^-]+-----\s+.+?\s+-----END [^-]+-----$') {
-            throw "$Name does not contain a valid PEM block. Store the complete PEM file content in Azure Key Vault."
+          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
+              if ($decoded -match '^-----BEGIN ') {
+                $normalized = $decoded.Trim()
+              }
+            }
+            catch {
+              # The value is neither PEM nor Base64-wrapped PEM.
+            }
+          }
+
+          if ($normalized -notmatch '(?s)^-----BEGIN (?<label>[^-]+)-----\s+.+?\s+-----END \k<label>-----$') {
+            throw "$Name is not a valid PEM block or Base64-wrapped PEM. Store the complete cosign key file content in Azure Key Vault."
           }
 
           [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
@@ -1010,6 +1055,11 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
+        & "$(COSIGN_EXE)" public-key --key "$(Build.SourcesDirectory)\cosign.key" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Cosign could not parse cosign.key. Verify that cosign-private-key contains the complete unencrypted cosign.key PEM file.'
+        }
+
         $images = @(
           'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
           'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
