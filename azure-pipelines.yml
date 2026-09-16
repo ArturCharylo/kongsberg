@@ -569,8 +569,74 @@ stages:
       inputs:
         azureSubscription: 'key-vault'
         KeyVaultName: 'kongsberg'
-        SecretsFilter: 'ingress-tls'
+        SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
         RunAsPreJob: false
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key'), $env:COSIGN_PRIVATE_KEY, $utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'), $env:COSIGN_PUBLIC_KEY, $utf8NoBom)
+        if (-not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key')) -or
+            -not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'))) {
+          throw 'Cosign key files could not be restored.'
+        }
+      displayName: Restore Cosign signing keys
+      env:
+        COSIGN_PRIVATE_KEY: $(cosign-private-key)
+        COSIGN_PUBLIC_KEY: $(cosign-public-key)
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        if (-not (Get-Command cosign.exe -ErrorAction SilentlyContinue)) {
+          $cosignVersion = 'v2.4.1'
+          $cosignDirectory = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign'
+          New-Item -ItemType Directory -Force -Path $cosignDirectory | Out-Null
+          $cosignPath = Join-Path $cosignDirectory 'cosign.exe'
+          Invoke-WebRequest `
+            -Uri "https://github.com/sigstore/cosign/releases/download/$cosignVersion/cosign-windows-amd64.exe" `
+            -OutFile $cosignPath `
+            -UseBasicParsing
+          Write-Host "##vso[task.prependpath]$cosignDirectory"
+        }
+        cosign.exe version
+      displayName: Ensure Cosign is installed
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $images = @(
+          'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)'
+        )
+
+        foreach ($image in $images) {
+          cosign.exe sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
+        }
+      displayName: Sign DEV images with Cosign
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $images = @(
+          'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)'
+        )
+
+        try {
+          foreach ($image in $images) {
+            cosign.exe verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
+          }
+        }
+        finally {
+          Remove-Item "$(Build.SourcesDirectory)\cosign.key", "$(Build.SourcesDirectory)\cosign.pub" -Force -ErrorAction SilentlyContinue
+        }
+      displayName: Verify DEV image signatures
+
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
@@ -849,8 +915,73 @@ stages:
       inputs:
         azureSubscription: 'key-vault'
         KeyVaultName: 'kongsberg'
-        SecretsFilter: 'ingress-tls'
+        SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
         RunAsPreJob: false
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key'), $env:COSIGN_PRIVATE_KEY, $utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'), $env:COSIGN_PUBLIC_KEY, $utf8NoBom)
+        if (-not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key')) -or
+            -not (Test-Path (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub'))) {
+          throw 'Cosign key files could not be restored.'
+        }
+      displayName: Restore Cosign signing keys
+      env:
+        COSIGN_PRIVATE_KEY: $(cosign-private-key)
+        COSIGN_PUBLIC_KEY: $(cosign-public-key)
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        if (-not (Get-Command cosign.exe -ErrorAction SilentlyContinue)) {
+          $cosignVersion = 'v2.4.1'
+          $cosignDirectory = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign'
+          New-Item -ItemType Directory -Force -Path $cosignDirectory | Out-Null
+          $cosignPath = Join-Path $cosignDirectory 'cosign.exe'
+          Invoke-WebRequest `
+            -Uri "https://github.com/sigstore/cosign/releases/download/$cosignVersion/cosign-windows-amd64.exe" `
+            -OutFile $cosignPath `
+            -UseBasicParsing
+          Write-Host "##vso[task.prependpath]$cosignDirectory"
+        }
+        cosign.exe version
+      displayName: Ensure Cosign is installed
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $images = @(
+          'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)'
+        )
+
+        foreach ($image in $images) {
+          cosign.exe sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
+        }
+      displayName: Sign PROD images with Cosign
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $images = @(
+          'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)'
+        )
+
+        try {
+          foreach ($image in $images) {
+            cosign.exe verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
+          }
+        }
+        finally {
+          Remove-Item "$(Build.SourcesDirectory)\cosign.key", "$(Build.SourcesDirectory)\cosign.pub" -Force -ErrorAction SilentlyContinue
+        }
+      displayName: Verify PROD image signatures
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
