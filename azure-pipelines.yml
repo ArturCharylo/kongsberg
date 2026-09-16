@@ -588,7 +588,15 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        if (-not (Get-Command cosign.exe -ErrorAction SilentlyContinue)) {
+        $existingCosign = Get-Command cosign.exe -ErrorAction SilentlyContinue
+        $cosignPath = if ($existingCosign) { $existingCosign.Source } else { $null }
+        $supportsNonInteractiveSign = $false
+        if ($cosignPath) {
+          $signHelp = (& $cosignPath sign --help 2>&1 | Out-String)
+          $supportsNonInteractiveSign = $signHelp -match '--yes'
+        }
+
+        if (-not $supportsNonInteractiveSign) {
           $cosignVersion = 'v2.4.1'
           $cosignDirectory = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign'
           New-Item -ItemType Directory -Force -Path $cosignDirectory | Out-Null
@@ -597,9 +605,9 @@ stages:
             -Uri "https://github.com/sigstore/cosign/releases/download/$cosignVersion/cosign-windows-amd64.exe" `
             -OutFile $cosignPath `
             -UseBasicParsing
-          Write-Host "##vso[task.prependpath]$cosignDirectory"
         }
-        cosign.exe version
+        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
+        & $cosignPath version
       displayName: Ensure Cosign is installed
 
     - powershell: |
@@ -613,7 +621,7 @@ stages:
         )
 
         foreach ($image in $images) {
-          cosign.exe sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
         }
       displayName: Sign DEV images with Cosign
 
@@ -629,7 +637,7 @@ stages:
 
         try {
           foreach ($image in $images) {
-            cosign.exe verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
+            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
           }
         }
         finally {
@@ -934,7 +942,15 @@ stages:
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        if (-not (Get-Command cosign.exe -ErrorAction SilentlyContinue)) {
+        $existingCosign = Get-Command cosign.exe -ErrorAction SilentlyContinue
+        $cosignPath = if ($existingCosign) { $existingCosign.Source } else { $null }
+        $supportsNonInteractiveSign = $false
+        if ($cosignPath) {
+          $signHelp = (& $cosignPath sign --help 2>&1 | Out-String)
+          $supportsNonInteractiveSign = $signHelp -match '--yes'
+        }
+
+        if (-not $supportsNonInteractiveSign) {
           $cosignVersion = 'v2.4.1'
           $cosignDirectory = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign'
           New-Item -ItemType Directory -Force -Path $cosignDirectory | Out-Null
@@ -943,9 +959,9 @@ stages:
             -Uri "https://github.com/sigstore/cosign/releases/download/$cosignVersion/cosign-windows-amd64.exe" `
             -OutFile $cosignPath `
             -UseBasicParsing
-          Write-Host "##vso[task.prependpath]$cosignDirectory"
         }
-        cosign.exe version
+        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
+        & $cosignPath version
       displayName: Ensure Cosign is installed
 
     - powershell: |
@@ -959,7 +975,7 @@ stages:
         )
 
         foreach ($image in $images) {
-          cosign.exe sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $image
         }
       displayName: Sign PROD images with Cosign
 
@@ -975,7 +991,7 @@ stages:
 
         try {
           foreach ($image in $images) {
-            cosign.exe verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
+            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $image
           }
         }
         finally {
