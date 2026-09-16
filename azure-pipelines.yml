@@ -498,6 +498,107 @@ stages:
         docker tag grafana/grafana-enterprise:latest knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)
       displayName: Tag images for DEV
 
+    - task: AzureKeyVault@2
+      displayName: Download DEV Cosign keys
+      inputs:
+        azureSubscription: 'key-vault'
+        KeyVaultName: 'kongsberg'
+        SecretsFilter: 'cosign-private-key,cosign-public-key'
+        RunAsPreJob: false
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        function Restore-PemSecret {
+          param([string]$Value, [string]$Path, [string]$Name)
+
+          if ([string]::IsNullOrWhiteSpace($Value)) {
+            throw "$Name is empty. Check the Azure Key Vault secret value."
+          }
+
+          $normalized = $Value.Trim([char]0xFEFF).Trim()
+          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) {
+            $normalized = $normalized | ConvertFrom-Json
+          }
+          $normalized = $normalized -replace '\\r\\n', "`n"
+          $normalized = $normalized -replace '\\n', "`n"
+          $normalized = $normalized -replace '\\r', "`r"
+          $normalized = $normalized -replace "`r`n?", "`n"
+          $normalized = $normalized.Trim()
+
+          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
+              if ($decoded -match '^-----BEGIN ') { $normalized = $decoded.Trim() }
+            }
+            catch { }
+          }
+
+          $pem = [regex]::Match($normalized, '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$')
+          if (-not $pem.Success) {
+            throw "$Name is not a valid PEM block or Base64-wrapped PEM."
+          }
+
+          $body = $pem.Groups['body'].Value -replace '\s', ''
+          if ([string]::IsNullOrWhiteSpace($body)) { throw "$Name contains an empty PEM body." }
+          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
+          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
+          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
+        }
+
+        Restore-PemSecret $env:COSIGN_PRIVATE_KEY "$(Build.SourcesDirectory)\cosign.key" 'cosign-private-key'
+        Restore-PemSecret $env:COSIGN_PUBLIC_KEY "$(Build.SourcesDirectory)\cosign.pub" 'cosign-public-key'
+      displayName: Restore DEV Cosign keys
+      env:
+        COSIGN_PRIVATE_KEY: $(cosign-private-key)
+        COSIGN_PUBLIC_KEY: $(cosign-public-key)
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $cosignPath = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign\cosign.exe'
+        if (-not (Test-Path $cosignPath)) {
+          New-Item -ItemType Directory -Force -Path (Split-Path $cosignPath) | Out-Null
+          Invoke-WebRequest `
+            -Uri 'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-windows-amd64.exe' `
+            -OutFile $cosignPath `
+            -UseBasicParsing
+        }
+        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
+        & $cosignPath version
+      displayName: Ensure Cosign is installed for DEV
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $signatureDirectory = Join-Path "$(Build.SourcesDirectory)" 'cosign-signatures-dev'
+        New-Item -ItemType Directory -Force -Path $signatureDirectory | Out-Null
+        Copy-Item "$(Build.SourcesDirectory)\cosign.pub" (Join-Path $signatureDirectory 'cosign.pub') -Force
+
+        $images = @(
+          'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)',
+          'knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)'
+        )
+
+        foreach ($image in $images) {
+          $name = ($image -split '/|:')[-2]
+          $signature = Join-Path $signatureDirectory "$name.sig"
+          & "$(COSIGN_EXE)" sign --yes --upload=false --key "$(Build.SourcesDirectory)\cosign.key" --output-signature $signature $image
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign local image $image." }
+        }
+      displayName: Sign DEV images locally
+      env:
+        COSIGN_PASSWORD: $(cosign-password)
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish DEV image signatures
+      inputs:
+        pathToPublish: '$(Build.SourcesDirectory)\cosign-signatures-dev'
+        artifactName: cosign-signatures-dev
+        artifactType: container
+
     - task: Docker@2
       displayName: Push API DEV
       inputs:
@@ -664,28 +765,17 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed
 
-    - task: Docker@2
-      displayName: Login to DEV ACR for Cosign
+    - task: DownloadBuildArtifacts@1
+      displayName: Download DEV image signatures
       inputs:
-        command: login
-        containerRegistry: dev
-
-    - powershell: |
-        $keyPath = "$(Build.SourcesDirectory)\cosign.key"
-        $keyText = Get-Content $keyPath -Raw
-        Write-Host "Cosign private key length: $($keyText.Length)"
-        Write-Host "Cosign private key has PEM header: $($keyText -match '(?m)^-----BEGIN [^-]+-----$')"
-        Write-Host "Cosign private key has PEM footer: $($keyText -match '(?m)^-----END [^-]+-----$')"
-        Write-Host "Cosign private key starts with UTF-8 BOM: $($keyText.Length -gt 0 -and [int][char]$keyText[0] -eq 0xFEFF)"
-      displayName: Debug Cosign key metadata
+        buildType: current
+        downloadType: specific
+        artifactName: cosign-signatures-dev
+        downloadPath: '$(Pipeline.Workspace)\cosign-artifacts'
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        & "$(COSIGN_EXE)" public-key --key "$(Build.SourcesDirectory)\cosign.key" | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Cosign could not parse cosign.key. Verify that cosign-private-key contains the complete encrypted cosign.key PEM file.'
-        }
-
+        $signatureDirectory = Join-Path "$(Pipeline.Workspace)\cosign-artifacts" 'cosign-signatures-dev'
         $images = @(
           'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
           'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
@@ -696,56 +786,14 @@ stages:
 
         foreach ($image in $images) {
           docker pull $image
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not pull the pushed image $image."
-          }
-
+          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $image." }
           $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
-            throw "Could not resolve a pushed digest for $image."
-          }
-
-          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $digest
-          if ($LASTEXITCODE -ne 0) {
-            throw "Cosign failed to sign $digest."
-          }
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') { throw "Could not resolve a pushed digest for $image." }
+          $name = ($image -split '/|:')[-2]
+          & "$(COSIGN_EXE)" verify --offline --key (Join-Path $signatureDirectory 'cosign.pub') --signature (Join-Path $signatureDirectory "$name.sig") $digest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $digest." }
         }
-      displayName: Sign DEV images with Cosign
-      env:
-        COSIGN_PASSWORD: $(cosign-password)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $images = @(
-          'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)'
-        )
-
-        try {
-          foreach ($image in $images) {
-            docker pull $image
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not pull the pushed image $image."
-            }
-
-            $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
-              throw "Could not resolve a pushed digest for $image."
-            }
-
-            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $digest
-            if ($LASTEXITCODE -ne 0) {
-              throw "Cosign failed to verify $digest."
-            }
-          }
-        }
-        finally {
-          Remove-Item "$(Build.SourcesDirectory)\cosign.key", "$(Build.SourcesDirectory)\cosign.pub" -Force -ErrorAction SilentlyContinue
-        }
-      displayName: Verify DEV image signatures
+      displayName: Verify DEV image signatures from artifact
 
 
     - powershell: |
@@ -954,6 +1002,99 @@ stages:
         docker tag grafana/grafana-enterprise:latest kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)
       displayName: Tag images for PROD
 
+    - task: AzureKeyVault@2
+      displayName: Download PROD Cosign keys
+      inputs:
+        azureSubscription: 'key-vault'
+        KeyVaultName: 'kongsberg'
+        SecretsFilter: 'cosign-private-key,cosign-public-key'
+        RunAsPreJob: false
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        function Restore-PemSecret {
+          param([string]$Value, [string]$Path, [string]$Name)
+
+          if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name is empty." }
+          $normalized = $Value.Trim([char]0xFEFF).Trim()
+          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) { $normalized = $normalized | ConvertFrom-Json }
+          $normalized = $normalized -replace '\\r\\n', "`n"
+          $normalized = $normalized -replace '\\n', "`n"
+          $normalized = $normalized -replace '\\r', "`r"
+          $normalized = $normalized -replace "`r`n?", "`n"
+          $normalized = $normalized.Trim()
+
+          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
+              if ($decoded -match '^-----BEGIN ') { $normalized = $decoded.Trim() }
+            }
+            catch { }
+          }
+
+          $pem = [regex]::Match($normalized, '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$')
+          if (-not $pem.Success) { throw "$Name is not a valid PEM block or Base64-wrapped PEM." }
+          $body = $pem.Groups['body'].Value -replace '\s', ''
+          if ([string]::IsNullOrWhiteSpace($body)) { throw "$Name contains an empty PEM body." }
+          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
+          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
+          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
+        }
+
+        Restore-PemSecret $env:COSIGN_PRIVATE_KEY "$(Build.SourcesDirectory)\cosign.key" 'cosign-private-key'
+        Restore-PemSecret $env:COSIGN_PUBLIC_KEY "$(Build.SourcesDirectory)\cosign.pub" 'cosign-public-key'
+      displayName: Restore PROD Cosign keys
+      env:
+        COSIGN_PRIVATE_KEY: $(cosign-private-key)
+        COSIGN_PUBLIC_KEY: $(cosign-public-key)
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $cosignPath = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign\cosign.exe'
+        if (-not (Test-Path $cosignPath)) {
+          New-Item -ItemType Directory -Force -Path (Split-Path $cosignPath) | Out-Null
+          Invoke-WebRequest `
+            -Uri 'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-windows-amd64.exe' `
+            -OutFile $cosignPath `
+            -UseBasicParsing
+        }
+        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
+        & $cosignPath version
+      displayName: Ensure Cosign is installed for PROD
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $signatureDirectory = Join-Path "$(Build.SourcesDirectory)" 'cosign-signatures-prod'
+        New-Item -ItemType Directory -Force -Path $signatureDirectory | Out-Null
+        Copy-Item "$(Build.SourcesDirectory)\cosign.pub" (Join-Path $signatureDirectory 'cosign.pub') -Force
+
+        $images = @(
+          'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)',
+          'kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)'
+        )
+
+        foreach ($image in $images) {
+          $name = ($image -split '/|:')[-2]
+          $signature = Join-Path $signatureDirectory "$name.sig"
+          & "$(COSIGN_EXE)" sign --yes --upload=false --key "$(Build.SourcesDirectory)\cosign.key" --output-signature $signature $image
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign local image $image." }
+        }
+      displayName: Sign PROD images locally
+      env:
+        COSIGN_PASSWORD: $(cosign-password)
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish PROD image signatures
+      inputs:
+        pathToPublish: '$(Build.SourcesDirectory)\cosign-signatures-prod'
+        artifactName: cosign-signatures-prod
+        artifactType: container
+
     - task: Docker@2
       displayName: Push API PROD
       inputs:
@@ -1120,28 +1261,17 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed
 
-    - task: Docker@2
-      displayName: Login to PROD ACR for Cosign
+    - task: DownloadBuildArtifacts@1
+      displayName: Download PROD image signatures
       inputs:
-        command: login
-        containerRegistry: prod
-
-    - powershell: |
-        $keyPath = "$(Build.SourcesDirectory)\cosign.key"
-        $keyText = Get-Content $keyPath -Raw
-        Write-Host "Cosign private key length: $($keyText.Length)"
-        Write-Host "Cosign private key has PEM header: $($keyText -match '(?m)^-----BEGIN [^-]+-----$')"
-        Write-Host "Cosign private key has PEM footer: $($keyText -match '(?m)^-----END [^-]+-----$')"
-        Write-Host "Cosign private key starts with UTF-8 BOM: $($keyText.Length -gt 0 -and [int][char]$keyText[0] -eq 0xFEFF)"
-      displayName: Debug Cosign key metadata
+        buildType: current
+        downloadType: specific
+        artifactName: cosign-signatures-prod
+        downloadPath: '$(Pipeline.Workspace)\cosign-artifacts'
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
-        & "$(COSIGN_EXE)" public-key --key "$(Build.SourcesDirectory)\cosign.key" | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Cosign could not parse cosign.key. Verify that cosign-private-key contains the complete unencrypted cosign.key PEM file.'
-        }
-
+        $signatureDirectory = Join-Path "$(Pipeline.Workspace)\cosign-artifacts" 'cosign-signatures-prod'
         $images = @(
           'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
           'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
@@ -1152,56 +1282,19 @@ stages:
 
         foreach ($image in $images) {
           docker pull $image
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not pull the pushed image $image."
-          }
+          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $image." }
 
           $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
             throw "Could not resolve a pushed digest for $image."
           }
 
-          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $digest
-          if ($LASTEXITCODE -ne 0) {
-            throw "Cosign failed to sign $digest."
-          }
+          $name = ($image -split '/|:')[-2]
+          $signature = Join-Path $signatureDirectory "$name.sig"
+          & "$(COSIGN_EXE)" verify --offline --key (Join-Path $signatureDirectory 'cosign.pub') --signature $signature $digest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $digest." }
         }
-      displayName: Sign PROD images with Cosign
-      env:
-        COSIGN_PASSWORD: $(cosign-password)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $images = @(
-          'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)'
-        )
-
-        try {
-          foreach ($image in $images) {
-            docker pull $image
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not pull the pushed image $image."
-            }
-
-            $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
-              throw "Could not resolve a pushed digest for $image."
-            }
-
-            & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $digest
-            if ($LASTEXITCODE -ne 0) {
-              throw "Cosign failed to verify $digest."
-            }
-          }
-        }
-        finally {
-          Remove-Item "$(Build.SourcesDirectory)\cosign.key", "$(Build.SourcesDirectory)\cosign.pub" -Force -ErrorAction SilentlyContinue
-        }
-      displayName: Verify PROD image signatures
+      displayName: Verify PROD image signatures from artifact
 
     - powershell: |
         $ErrorActionPreference = 'Stop'
