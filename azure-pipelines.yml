@@ -568,6 +568,12 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed for DEV
 
+    - task: Docker@2
+      displayName: Login DEV ACR
+      inputs:
+        command: login
+        containerRegistry: dev
+
     - powershell: |
         $ErrorActionPreference = 'Stop'
         $signatureDirectory = Join-Path "$(Build.SourcesDirectory)" 'cosign-signatures-dev'
