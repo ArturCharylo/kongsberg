@@ -30,7 +30,7 @@ steps:
     }
 
     foreach ($name in $images) {
-      $target = "${{ parameters.acrServer }}/praktyki-$name:$(Build.BuildId)"
+      $target = "${{ parameters.acrServer }}/praktyki-${name}:$($env:BUILD_BUILDID)"
       docker tag $sourceNames[$name] $target
       docker push $target
       if ($LASTEXITCODE -ne 0) { throw "Failed to push $target" }
