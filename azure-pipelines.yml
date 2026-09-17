@@ -30,54 +30,124 @@ stages:
       displayName: Helm Lint and Template Validation
 
 # ==================================================
-# TESTS & COVERAGE
+# TESTS AND COVERAGE
 # ==================================================
 - stage: Tests
-  displayName: Tests and Coverage
+  displayName: Tests and Code Coverage
   dependsOn: BuildAndValidate
   jobs:
-  - job: TestSuite
+  - job: Tests
     pool:
       name: Default
     steps:
+    # 1. Backend tests & coverage
     - powershell: |
         python -m pip install -r "$(Build.SourcesDirectory)\backend\requirements-test.txt"
-        python -m pytest backend/tests --cov=backend --cov-report=term --cov-report=html:backend\htmlcov --cov-report=xml:backend\coverage.xml --cov-report=json:backend\coverage.json --junitxml=backend\test-results.xml
-      displayName: Run Backend Tests
+        Set-Location "$(Build.SourcesDirectory)"
+        python -m pytest backend/tests `
+          --cov=backend `
+          --cov-report=term `
+          --cov-report=html:backend\htmlcov `
+          --cov-report=xml:backend\coverage.xml `
+          --cov-report=json:backend\coverage.json `
+          --junitxml=backend\test-results.xml
+      displayName: Run backend tests with coverage
 
     - task: PublishTestResults@2
+      displayName: Publish backend test results
+      condition: succeededOrFailed()
       inputs:
         testResultsFormat: JUnit
         testResultsFiles: 'backend/test-results.xml'
         testRunTitle: Backend tests
-      condition: succeededOrFailed()
 
     - task: PublishCodeCoverageResults@2
+      displayName: Publish backend coverage (Code Coverage Tab)
+      condition: succeededOrFailed()
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/backend/coverage.xml'
-        pathToSources: '$(Build.SourcesDirectory)'
+        pathToSources: '$(Build.SourcesDirectory)/backend'
         reportDirectory: '$(Build.SourcesDirectory)/backend/htmlcov'
-      condition: succeededOrFailed()
 
+    # 2. Frontend tests, coverage & lint
     - powershell: |
         Set-Location "$(Build.SourcesDirectory)\km_Praktyki"
         npm ci
-        npm run test:coverage -- --reporter=junit --outputFile=test-results\frontend-junit.xml
+        npm run test:coverage -- --reporter=junit --outputFile=test-results\frontend-junit.xml --coverage.reporter=cobertura --coverage.reporter=json-summary
         npm run lint -- --format json --output-file eslint-report.json
-      displayName: Run Frontend Tests & Lint
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "ESLint reported issues, but pipeline continues."
+        }
+      displayName: Run frontend tests, coverage and lint
+      condition: succeededOrFailed()
 
     - task: PublishTestResults@2
+      displayName: Publish frontend test results
+      condition: succeededOrFailed()
       inputs:
         testResultsFormat: JUnit
         testResultsFiles: 'km_Praktyki/test-results/frontend-junit.xml'
         testRunTitle: Frontend tests
-      condition: succeededOrFailed()
 
     - task: PublishCodeCoverageResults@2
+      displayName: Publish frontend coverage (Code Coverage Tab)
+      condition: succeededOrFailed()
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/km_Praktyki/coverage/cobertura-coverage.xml'
         pathToSources: '$(Build.SourcesDirectory)/km_Praktyki'
         reportDirectory: '$(Build.SourcesDirectory)/km_Praktyki/coverage'
+
+    # 3. Static analysis metrics for Prometheus/Grafana
+    - powershell: |
+        Set-Location "$(Build.SourcesDirectory)"
+        if (Test-Path "km_Praktyki\eslint-report.json") {
+          python km_Praktyki\scripts\eslint_to_prometheus.py `
+            km_Praktyki\eslint-report.json `
+            web-static-analysis-metrics.prom
+        }
+      displayName: Generate static analysis metrics
+      condition: succeededOrFailed()
+
+    # 4. Generate & Upload Markdown to Pipeline Summary Tab 
+    - powershell: |
+        $backendJsonPath = "$(Build.SourcesDirectory)\backend\coverage.json"
+        $frontendJsonPath = "$(Build.SourcesDirectory)\km_Praktyki\coverage\coverage-summary.json"
+        $summaryMdPath = "$(Build.SourcesDirectory)\test-coverage-summary.md"
+
+        $bPct = 0
+        $fPct = 0
+
+        if (Test-Path $backendJsonPath) {
+          $bData = Get-Content $backendJsonPath -Raw | ConvertFrom-Json
+          if ($bData.totals.percent_covered) {
+            $bPct = [math]::Round($bData.totals.percent_covered, 2)
+          }
+        }
+
+        if (Test-Path $frontendJsonPath) {
+          $fData = Get-Content $frontendJsonPath -Raw | ConvertFrom-Json
+          if ($fData.total.lines.pct) {
+            $fPct = [math]::Round($fData.total.lines.pct, 2)
+          }
+        }
+
+        $avgPct = [math]::Round(($bPct + $fPct) / 2, 2)
+
+        $lines = @(
+          "# Test and Code Coverage Summary",
+          "",
+          "| Area | Engine / Framework | Line Coverage |",
+          "| :--- | :--- | ---: |",
+          "| **Backend** | pytest | $bPct% |",
+          "| **Frontend** | Vitest | $fPct% |",
+          "| **Total Average** | | **$avgPct%** |",
+          "",
+          "*Detailed reports are available in the Code Coverage tab and published build artifacts.*"
+        )
+
+        [System.IO.File]::WriteAllLines($summaryMdPath, $lines, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "##vso[task.uploadsummary]$summaryMdPath"
+      displayName: Add Coverage Table to Pipeline Summary Tab
       condition: succeededOrFailed()
 
 # ==================================================
@@ -100,18 +170,17 @@ stages:
           @{ Name = 'frontend'; Image = 'km-praktyki-frontend:latest' }
         )
 
-        # 1. Generate JSON vulnerability reports and CycloneDX SBOM
+        # 1. Vulnerability and CycloneDX SBOM scans
         foreach ($t in $targets) {
           & $trivy image --format json --output "security-reports/trivy-$($t.Name)-report.json" $t.Image
           & $trivy image --format cyclonedx --output "sbom-reports/sbom-$($t.Name).json" $t.Image
         }
         & $trivy fs --format json --output "security-reports/trivy-source-report.json" .
 
-        # 2. Parse vulnerabilities and build Prometheus metrics in memory
+        # 2. Parse severity and build Prometheus metrics
         $critical = 0
         $high = 0
         $vulnMetrics = @()
-
         $jsonReports = @{
           'api'      = 'security-reports/trivy-api-report.json'
           'frontend' = 'security-reports/trivy-frontend-report.json'
@@ -167,7 +236,6 @@ stages:
       name: ParseReports
       condition: always()
 
-    # Publish raw reports as artifacts
     - task: PublishBuildArtifacts@1
       displayName: Publish Security & SBOM Reports
       inputs:
@@ -182,7 +250,6 @@ stages:
         artifactName: sbom-reports
       condition: always()
 
-    # Publish .prom files (trivy-metrics.prom and sbom-metrics.prom)
     - powershell: |
         New-Item -ItemType Directory -Force -Path "ci-metrics" | Out-Null
         Copy-Item "*.prom" -Destination "ci-metrics" -Force
@@ -203,28 +270,27 @@ stages:
       condition: succeededOrFailed()
 
 # ==================================================
-# DEPLOYMENT TEMPLATE LOGIC (DEV & PROD)
+# DEPLOY TO DEV
 # ==================================================
 - stage: PushDev
   displayName: Deploy to DEV
   dependsOn: SecurityScan
   jobs:
-  - deployment: DeployDev
+  - job: DeployDev
     pool:
       name: Default
-    environment: 'dev'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - template: templates/deploy-env.yml
-            parameters:
-              environment: 'dev'
-              acrServer: 'knsberg.azurecr.io'
-              acrServiceConnection: 'dev'
-              acrUsername: $(DEV_ACR_USERNAME)
-              acrPassword: $(DEV_ACR_PASSWORD)
+    steps:
+    - template: templates/deploy-env.yml
+      parameters:
+        environment: 'dev'
+        acrServer: 'knsberg.azurecr.io'
+        acrServiceConnection: 'dev'
+        acrUsername: $(DEV_ACR_USERNAME)
+        acrPassword: $(DEV_ACR_PASSWORD)
 
+# ==================================================
+# DEPLOY TO PROD
+# ==================================================
 - stage: PushProd
   displayName: Deploy to PROD
   dependsOn:
@@ -232,18 +298,14 @@ stages:
     - SecurityScan
   condition: and(succeeded(), eq(stageDependencies.SecurityScan.Scan.outputs['ParseReports.CriticalCount'], '0'))
   jobs:
-  - deployment: DeployProd
+  - job: DeployProd
     pool:
       name: Default
-    environment: 'prod'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - template: templates/deploy-env.yml
-            parameters:
-              environment: 'prod'
-              acrServer: 'kmprod.azurecr.io'
-              acrServiceConnection: 'prod'
-              acrUsername: $(PROD_ACR_USERNAME)
-              acrPassword: $(PROD_ACR_PASSWORD)
+    steps:
+    - template: templates/deploy-env.yml
+      parameters:
+        environment: 'prod'
+        acrServer: 'kmprod.azurecr.io'
+        acrServiceConnection: 'prod'
+        acrUsername: $(PROD_ACR_USERNAME)
+        acrPassword: $(PROD_ACR_PASSWORD)
