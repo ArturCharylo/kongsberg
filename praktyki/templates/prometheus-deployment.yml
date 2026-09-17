@@ -9,6 +9,14 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  minReadySeconds: 10
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
       maxSurge: 0
       maxUnavailable: 1
   selector:
@@ -21,6 +29,7 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/prometheus-config.yml") . | sha256sum }}
     spec:
+      terminationGracePeriodSeconds: 30
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}
       - name: {{ . }}

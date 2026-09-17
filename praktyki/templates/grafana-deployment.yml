@@ -6,6 +6,14 @@ metadata:
     app: grafana
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  minReadySeconds: 10
+
   selector:
     matchLabels:
       app: grafana
@@ -14,6 +22,7 @@ spec:
       labels:
         app: grafana
     spec:
+      terminationGracePeriodSeconds: 30
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}
       - name: {{ . }}

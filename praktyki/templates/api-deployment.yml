@@ -6,6 +6,15 @@ metadata:
     app: api
 spec:
   replicas: 2
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  minReadySeconds: 10
+
   selector:
     matchLabels:
       app: api
@@ -14,6 +23,7 @@ spec:
       labels:
         app: api
     spec:
+      terminationGracePeriodSeconds: 30
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}
       - name: {{ . }}
