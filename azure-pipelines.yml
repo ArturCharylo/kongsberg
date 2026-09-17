@@ -620,7 +620,6 @@ stages:
           $(Build.BuildId)
 
     - powershell: |
-       - powershell: |
         $ErrorActionPreference = 'Stop'
         $images = @(
           @{ Name = 'API'; Repository = 'praktyki-api' },
