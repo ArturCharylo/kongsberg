@@ -110,45 +110,50 @@ stages:
 
     # 4. Generate & Upload Markdown to Pipeline Summary Tab 
     - powershell: |
-        $backendJsonPath = "$(Build.SourcesDirectory)\backend\coverage.json"
-        $frontendJsonPath = "$(Build.SourcesDirectory)\km_Praktyki\coverage\coverage-summary.json"
-        $summaryMdPath = "$(Build.SourcesDirectory)\test-coverage-summary.md"
+        @'
+        import json
+        from pathlib import Path
 
-        $bPct = 0
-        $fPct = 0
+        b_pct = 0.0
+        f_pct = 0.0
 
-        if (Test-Path $backendJsonPath) {
-          $bData = Get-Content $backendJsonPath -Raw | ConvertFrom-Json
-          if ($bData.totals.percent_covered) {
-            $bPct = [math]::Round($bData.totals.percent_covered, 2)
-          }
-        }
+        b_path = Path('backend/coverage.json')
+        if b_path.exists():
+            try:
+                data = json.loads(b_path.read_text(encoding='utf-8'))
+                b_pct = round(data.get('totals', {}).get('percent_covered', 0.0), 2)
+            except Exception as e:
+                print(f"Error parsing backend coverage: {e}")
 
-        if (Test-Path $frontendJsonPath) {
-          $fData = Get-Content $frontendJsonPath -Raw | ConvertFrom-Json
-          if ($fData.total.lines.pct) {
-            $fPct = [math]::Round($fData.total.lines.pct, 2)
-          }
-        }
+        f_path = Path('km_Praktyki/coverage/coverage-summary.json')
+        if f_path.exists():
+            try:
+                data = json.loads(f_path.read_text(encoding='utf-8'))
+                f_pct = round(data.get('total', {}).get('lines', {}).get('pct', 0.0), 2)
+            except Exception as e:
+                print(f"Error parsing frontend coverage: {e}")
 
-        $avgPct = [math]::Round(($bPct + $fPct) / 2, 2)
+        avg = round((b_pct + f_pct) / 2, 2)
 
-        $lines = @(
-          "# Test and Code Coverage Summary",
-          "",
-          "| Area | Engine / Framework | Line Coverage |",
-          "| :--- | :--- | ---: |",
-          "| **Backend** | pytest | $bPct% |",
-          "| **Frontend** | Vitest | $fPct% |",
-          "| **Total Average** | | **$avgPct%** |",
-          "",
-          "*Detailed reports are available in the Code Coverage tab and published build artifacts.*"
-        )
+        summary_content = '\n'.join([
+            '# Test and Code Coverage Summary',
+            '',
+            '| Area | Engine / Framework | Line Coverage |',
+            '| :--- | :--- | ---: |',
+            f'| **Backend** | pytest | {b_pct}% |',
+            f'| **Frontend** | Vitest | {f_pct}% |',
+            f'| **Total Average** | | **{avg}%** |',
+            '',
+            '*Detailed reports are available in the Code Coverage tab and published build artifacts.*',
+            ''
+        ])
 
-        [System.IO.File]::WriteAllLines($summaryMdPath, $lines, [System.Text.UTF8Encoding]::new($false))
-        Write-Host "##vso[task.uploadsummary]$summaryMdPath"
+        Path('test-coverage-summary.md').write_text(summary_content, encoding='utf-8')
+        '@ | python -
+
+        Write-Host "##vso[task.uploadsummary]$(Build.SourcesDirectory)\test-coverage-summary.md"
       displayName: Add Coverage Table to Pipeline Summary Tab
-      condition: succeededOrFailed()
+      condition: succeededOrFailed(
 
 # ==================================================
 # SECURITY & SBOM SCAN
