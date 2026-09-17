@@ -47,7 +47,6 @@ stages:
         python -m pytest backend/tests `
           --cov=backend `
           --cov-report=term `
-          --cov-report=html:backend\htmlcov `
           --cov-report=xml:backend\coverage.xml `
           --cov-report=json:backend\coverage.json `
           --junitxml=backend\test-results.xml
@@ -61,15 +60,7 @@ stages:
         testResultsFiles: 'backend/test-results.xml'
         testRunTitle: Backend tests
 
-    - task: PublishCodeCoverageResults@2
-      displayName: Publish backend coverage (Code Coverage Tab)
-      condition: succeededOrFailed()
-      inputs:
-        summaryFileLocation: '$(Build.SourcesDirectory)/backend/coverage.xml'
-        pathToSources: '$(Build.SourcesDirectory)/backend'
-        reportDirectory: '$(Build.SourcesDirectory)/backend/htmlcov'
-
-    # 2. Frontend tests, coverage & lint
+    # 2. Frontend tests, coverage & lint (Zadanie 12)
     - powershell: |
         Set-Location "$(Build.SourcesDirectory)\km_Praktyki"
         npm ci
@@ -89,15 +80,26 @@ stages:
         testResultsFiles: 'km_Praktyki/test-results/frontend-junit.xml'
         testRunTitle: Frontend tests
 
+    # 3. Jedno wspólne zadanie publikujące Code Coverage dla obu projektów
+    - powershell: |
+        New-Item -ItemType Directory -Force -Path "merged-coverage" | Out-Null
+        if (Test-Path "$(Build.SourcesDirectory)\backend\coverage.xml") {
+          Copy-Item "$(Build.SourcesDirectory)\backend\coverage.xml" -Destination "merged-coverage\backend-coverage.xml"
+        }
+        if (Test-Path "$(Build.SourcesDirectory)\km_Praktyki\coverage\cobertura-coverage.xml") {
+          Copy-Item "$(Build.SourcesDirectory)\km_Praktyki\coverage\cobertura-coverage.xml" -Destination "merged-coverage\frontend-coverage.xml"
+        }
+      displayName: Collect Coverage XMLs
+      condition: succeededOrFailed()
+
     - task: PublishCodeCoverageResults@2
-      displayName: Publish frontend coverage (Code Coverage Tab)
+      displayName: Publish Merged Code Coverage (Code Coverage Tab)
       condition: succeededOrFailed()
       inputs:
-        summaryFileLocation: '$(Build.SourcesDirectory)/km_Praktyki/coverage/cobertura-coverage.xml'
-        pathToSources: '$(Build.SourcesDirectory)/km_Praktyki'
-        reportDirectory: '$(Build.SourcesDirectory)/km_Praktyki/coverage'
+        summaryFileLocation: '$(Build.SourcesDirectory)/merged-coverage/*.xml'
+        failIfCoverageEmpty: false
 
-    # 3. Static analysis metrics for Prometheus/Grafana
+    # 4. Static analysis metrics for Prometheus/Grafana (Zadanie 12)
     - powershell: |
         Set-Location "$(Build.SourcesDirectory)"
         if (Test-Path "km_Praktyki\eslint-report.json") {
@@ -108,7 +110,7 @@ stages:
       displayName: Generate static analysis metrics
       condition: succeededOrFailed()
 
-    # 4. Generate & Upload Markdown to Pipeline Summary Tab 
+    # 5. Generate & Upload Markdown to Pipeline Summary Tab (Zadanie 11)
     - powershell: |
         @'
         import json
