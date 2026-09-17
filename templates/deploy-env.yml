@@ -20,32 +20,48 @@ steps:
     containerRegistry: ${{ parameters.acrServiceConnection }}
 
 - powershell: |
+    $ErrorActionPreference = 'Stop'
     $images = @('api', 'frontend', 'postgres', 'prom', 'grafana')
     $sourceNames = @{
-      'api' = 'km-praktyki-api:latest'
+      'api'      = 'km-praktyki-api:latest'
       'frontend' = 'km-praktyki-frontend:latest'
       'postgres' = 'postgres:16-alpine'
-      'prom' = 'prom/prometheus:latest'
-      'grafana' = 'grafana/grafana-enterprise:latest'
+      'prom'     = 'prom/prometheus:latest'
+      'grafana'  = 'grafana/grafana-enterprise:latest'
     }
 
     foreach ($name in $images) {
+      $source = $sourceNames[$name]
       $target = "${{ parameters.acrServer }}/praktyki-${name}:$($env:BUILD_BUILDID)"
-      docker tag $sourceNames[$name] $target
+
+      # Ensure base images exist locally before tagging
+      if ($name -in @('postgres', 'prom', 'grafana')) {
+        Write-Host "Pulling base image: $source"
+        docker pull $source
+        if ($LASTEXITCODE -ne 0) { throw "Failed to pull base image $source" }
+      }
+
+      docker tag $source $target
       docker push $target
       if ($LASTEXITCODE -ne 0) { throw "Failed to push $target" }
 
-      # Pull remote digest & export as output variable
+      # Pull remote target to resolve fresh repo digest
+      docker pull $target
       $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $target
-      $matched = ($repoDigests -split '\s+' | Where-Object { $_ -like "*${{ parameters.acrServer }}/*@sha256:*" } | Select-Object -First 1)
+      $matched = ($repoDigests -split '\s+' | Where-Object { $_ -like "*${{ parameters.acrServer }}/praktyki-${name}@sha256:*" } | Select-Object -First 1)
       if (-not $matched) {
         $matched = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
       }
+
+      if (-not $matched) {
+        throw "Could not find RepoDigest for $target"
+      }
+
       $digest = $matched.Substring($matched.IndexOf('@') + 1)
       Write-Host "$name digest: $digest"
       Write-Host "##vso[task.setvariable variable=$($name.ToUpper())_IMAGE_DIGEST]$digest"
     }
-  displayName: Tag, Push and Capture Digests
+  displayName: Pull Base Images, Tag, Push and Capture Digests
 
 - task: AzureKeyVault@2
   displayName: Download Ingress TLS and Cosign Keys
