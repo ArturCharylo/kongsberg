@@ -620,6 +620,7 @@ stages:
           $(Build.BuildId)
 
     - powershell: |
+       - powershell: |
         $ErrorActionPreference = 'Stop'
         $images = @(
           @{ Name = 'API'; Repository = 'praktyki-api' },
@@ -630,25 +631,52 @@ stages:
         )
 
         foreach ($image in $images) {
-          $taggedImage = "knsberg.azurecr.io/$($image.Repository):$(Build.BuildId)"
+          $registry = "knsberg.azurecr.io"
+          $repo = $image.Repository
+          $tag = "$(Build.BuildId)"
+          $taggedImage = "$registry/${repo}:$tag"
+
+          # Force pull to ensure remote state
           docker pull $taggedImage
           if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $taggedImage." }
 
-          $repoDigest = (docker inspect --format='{{index .RepoDigests 0}}' $taggedImage | Select-Object -First 1).Trim()
-          if ($LASTEXITCODE -ne 0 -or $repoDigest -notmatch '^knsberg\.azurecr\.io/.+@sha256:[0-9a-f]{64}$') {
-            throw "Could not resolve a valid RepoDigest for $taggedImage."
+          # Retrieve all RepoDigests and find the one matching the registry and containing sha256
+          $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $taggedImage
+          $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -like "*$registry/$repo@sha256:*" } | Select-Object -First 1)
+
+          # Fallback: if daemon didn't populate RepoDigests, resolve digest directly via docker buildx imagetools or registry inspect
+          if (-not $matchedDigest) {
+            $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
           }
-          $digest = $repoDigest.Substring($repoDigest.IndexOf('@') + 1)
-          Write-Host "$($image.Name) digest: $repoDigest"
+
+          if (-not $matchedDigest) {
+            # Last-resort fallback: inspect manifest digest using buildx
+            $manifestInspect = docker buildx imagetools inspect $taggedImage --raw 2>$null
+            if ($manifestInspect) {
+              $hasher = [System.Security.Cryptography.SHA256]::Create()
+              $hashBytes = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($manifestInspect))
+              $calculatedSha = -join ($hashBytes | ForEach-Object { "{0:x2}" -f $_ })
+              $matchedDigest = "$registry/${repo}@sha256:$calculatedSha"
+            }
+          }
+
+          if (-not $matchedDigest -or $matchedDigest -notmatch '@sha256:[0-9a-f]{64}$') {
+            throw "Could not resolve a valid RepoDigest for $taggedImage. RepoDigests found: '$repoDigests'"
+          }
+
+          $matchedDigest = $matchedDigest.Trim()
+          $digest = $matchedDigest.Substring($matchedDigest.IndexOf('@') + 1)
+
+          Write-Host "$($image.Name) digest: $matchedDigest"
           Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
 
-          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $repoDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $repoDigest." }
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $matchedDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $matchedDigest." }
 
-          & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $repoDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $repoDigest." }
+          & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $matchedDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $matchedDigest." }
         }
-      displayName: Sign and verify DEV image digests in ACR
+      displayName: Sign and verify DEV image digests in ACR  
       env:
         COSIGN_PASSWORD: $(cosign-password)
 
@@ -1103,23 +1131,50 @@ stages:
         )
 
         foreach ($image in $images) {
-          $taggedImage = "kmprod.azurecr.io/$($image.Repository):$(Build.BuildId)"
+          $registry = "kmprod.azurecr.io"
+          $repo = $image.Repository
+          $tag = "$(Build.BuildId)"
+          $taggedImage = "$registry/${repo}:$tag"
+
+          # Force pull to ensure remote state
           docker pull $taggedImage
           if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $taggedImage." }
 
-          $repoDigest = (docker inspect --format='{{index .RepoDigests 0}}' $taggedImage | Select-Object -First 1).Trim()
-          if ($LASTEXITCODE -ne 0 -or $repoDigest -notmatch '^kmprod\.azurecr\.io/.+@sha256:[0-9a-f]{64}$') {
-            throw "Could not resolve a valid RepoDigest for $taggedImage."
+          # Retrieve all RepoDigests and find the one matching the registry and containing sha256
+          $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $taggedImage
+          $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -like "*$registry/$repo@sha256:*" } | Select-Object -First 1)
+
+          # Fallback: if daemon didn't populate RepoDigests, resolve digest directly via docker buildx imagetools or registry inspect
+          if (-not $matchedDigest) {
+            $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
           }
-          $digest = $repoDigest.Substring($repoDigest.IndexOf('@') + 1)
-          Write-Host "$($image.Name) digest: $repoDigest"
+
+          if (-not $matchedDigest) {
+            # Last-resort fallback: inspect manifest digest using buildx
+            $manifestInspect = docker buildx imagetools inspect $taggedImage --raw 2>$null
+            if ($manifestInspect) {
+              $hasher = [System.Security.Cryptography.SHA256]::Create()
+              $hashBytes = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($manifestInspect))
+              $calculatedSha = -join ($hashBytes | ForEach-Object { "{0:x2}" -f $_ })
+              $matchedDigest = "$registry/${repo}@sha256:$calculatedSha"
+            }
+          }
+
+          if (-not $matchedDigest -or $matchedDigest -notmatch '@sha256:[0-9a-f]{64}$') {
+            throw "Could not resolve a valid RepoDigest for $taggedImage. RepoDigests found: '$repoDigests'"
+          }
+
+          $matchedDigest = $matchedDigest.Trim()
+          $digest = $matchedDigest.Substring($matchedDigest.IndexOf('@') + 1)
+
+          Write-Host "$($image.Name) digest: $matchedDigest"
           Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
 
-          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $repoDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $repoDigest." }
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $matchedDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $matchedDigest." }
 
-          & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $repoDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $repoDigest." }
+          & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $matchedDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $matchedDigest." }
         }
       displayName: Sign and verify PROD image digests in ACR
       env:
