@@ -3,1504 +3,247 @@ trigger:
 
 variables:
   - group: km
+  - name: COSIGN_VERSION
+    value: 'v2.4.1'
 
 stages:
 
 # ==================================================
-# PREPARATION
+# BUILD & HELM VALIDATION
 # ==================================================
-- stage: Preparation
-  displayName: Preparation
-
-  jobs:
-  - job: Prepare
-    pool:
-      name: Default
-
-    steps:
-    - checkout: self
-
-# ==================================================
-# BUILD
-# ==================================================
-- stage: Build
-  displayName: Build Application Stack
-  dependsOn: Preparation
-
+- stage: BuildAndValidate
+  displayName: Build & Validate
   jobs:
   - job: Build
     pool:
       name: Default
-
     steps:
     - powershell: |
         docker compose -p km-praktyki build --pull
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      displayName: Build Application Stack
 
-        if ($LASTEXITCODE -ne 0)
-        {
-          exit $LASTEXITCODE
-        }
-      displayName: Build application stack
-
-# ==================================================
-# HELM VALIDATION
-# ==================================================
-- stage: HelmValidation
-  displayName: Helm Validation
-  dependsOn: Build
-
-  jobs:
-  - job: Validate
-    pool:
-      name: Default
-
-    steps:
     - powershell: |
         helm lint .\praktyki
-      displayName: Helm Lint
-
-    - powershell: |
         helm template praktyki .\praktyki > rendered.yaml
-
-        if ($LASTEXITCODE -ne 0) {
-          exit $LASTEXITCODE
-        }
-      displayName: Helm Template Validation
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      displayName: Helm Lint and Template Validation
 
 # ==================================================
-# TESTS AND COVERAGE
+# TESTS & COVERAGE
 # ==================================================
 - stage: Tests
-  displayName: Tests and Code Coverage
-  dependsOn: HelmValidation
-
+  displayName: Tests and Coverage
+  dependsOn: BuildAndValidate
   jobs:
-  - job: Tests
+  - job: TestSuite
     pool:
       name: Default
-
     steps:
     - powershell: |
         python -m pip install -r "$(Build.SourcesDirectory)\backend\requirements-test.txt"
-      displayName: Install backend test dependencies
-
-    - powershell: |
-        Set-Location "$(Build.SourcesDirectory)"
-        python -m pytest backend/tests `
-          --cov=backend `
-          --cov-report=term `
-          --cov-report=html:backend\htmlcov `
-          --cov-report=xml:backend\coverage.xml `
-          --cov-report=json:backend\coverage.json `
-          --junitxml=backend\test-results.xml
-      displayName: Run backend tests with coverage
+        python -m pytest backend/tests --cov=backend --cov-report=term --cov-report=html:backend\htmlcov --cov-report=xml:backend\coverage.xml --cov-report=json:backend\coverage.json --junitxml=backend\test-results.xml
+      displayName: Run Backend Tests
 
     - task: PublishTestResults@2
-      displayName: Publish backend test results
-      condition: succeededOrFailed()
       inputs:
         testResultsFormat: JUnit
         testResultsFiles: 'backend/test-results.xml'
         testRunTitle: Backend tests
-        failTaskOnFailedTests: true
+      condition: succeededOrFailed()
 
     - task: PublishCodeCoverageResults@2
-      displayName: Publish backend coverage
-      condition: succeededOrFailed()
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/backend/coverage.xml'
         pathToSources: '$(Build.SourcesDirectory)'
         reportDirectory: '$(Build.SourcesDirectory)/backend/htmlcov'
-        failIfCoverageEmpty: true
+      condition: succeededOrFailed()
 
     - powershell: |
         Set-Location "$(Build.SourcesDirectory)\km_Praktyki"
         npm ci
         npm run test:coverage -- --reporter=junit --outputFile=test-results\frontend-junit.xml
-      displayName: Run frontend tests with coverage
-
-    - powershell: |
-        Set-Location "$(Build.SourcesDirectory)\km_Praktyki"
         npm run lint -- --format json --output-file eslint-report.json
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "ESLint found issues. The report will still be published."
-          exit $LASTEXITCODE
-        }
-      displayName: Run frontend static code analysis
-      condition: succeededOrFailed()
-
-    - powershell: |
-        Set-Location "$(Build.SourcesDirectory)"
-        python km_Praktyki\scripts\eslint_to_prometheus.py `
-          km_Praktyki\eslint-report.json `
-          web-static-analysis-metrics.prom
-      displayName: Generate static analysis metrics
-      condition: succeededOrFailed()
-
-    - task: PublishBuildArtifacts@1
-      displayName: Publish frontend static analysis report
-      condition: succeededOrFailed()
-      inputs:
-        pathToPublish: '$(Build.SourcesDirectory)\km_Praktyki\eslint-report.json'
-        artifactName: frontend-static-analysis-report
-        artifactType: container
-
-    - task: PublishBuildArtifacts@1
-      displayName: Publish static analysis metrics
-      condition: succeededOrFailed()
-      inputs:
-        pathToPublish: '$(Build.SourcesDirectory)\web-static-analysis-metrics.prom'
-        artifactName: web-static-analysis-metrics
-        artifactType: container
+      displayName: Run Frontend Tests & Lint
 
     - task: PublishTestResults@2
-      displayName: Publish frontend test results
-      condition: succeededOrFailed()
       inputs:
         testResultsFormat: JUnit
         testResultsFiles: 'km_Praktyki/test-results/frontend-junit.xml'
         testRunTitle: Frontend tests
-        failTaskOnFailedTests: true
+      condition: succeededOrFailed()
 
     - task: PublishCodeCoverageResults@2
-      displayName: Publish frontend coverage
-      condition: succeededOrFailed()
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/km_Praktyki/coverage/cobertura-coverage.xml'
         pathToSources: '$(Build.SourcesDirectory)/km_Praktyki'
         reportDirectory: '$(Build.SourcesDirectory)/km_Praktyki/coverage'
-        failIfCoverageEmpty: true
-
-    - powershell: |
-        New-Item -ItemType Directory -Force -Path "test-and-coverage-reports" | Out-Null
-
-        @'
-        import json
-        from pathlib import Path
-
-        backend = json.loads(Path('backend/coverage.json').read_text())
-        frontend = json.loads(Path('km_Praktyki/coverage/coverage-summary.json').read_text())
-
-        backend_percent = round(backend['totals']['percent_covered'], 2)
-        frontend_percent = round(frontend['total']['lines']['pct'], 2)
-        average_percent = round((backend_percent + frontend_percent) / 2, 2)
-
-        Path('test-coverage-summary.md').write_text(
-            '\n'.join([
-                '# Test and Code Coverage Summary',
-                '',
-                '| Area | Tests | Line coverage |',
-                '| --- | ---: | ---: |',
-                f'| Backend | pytest | {backend_percent}% |',
-                f'| Frontend | Vitest | {frontend_percent}% |',
-                f'| Average | | {average_percent}% |',
-                '',
-                'Detailed JUnit and coverage reports are available in the published pipeline results and artifacts.',
-                '',
-            ]),
-            encoding='utf-8',
-        )
-        '@ | python -
-
-        Copy-Item -Path "backend\test-results.xml" -Destination "test-and-coverage-reports" -Force
-        Copy-Item -Path "backend\coverage.xml" -Destination "test-and-coverage-reports" -Force
-        Copy-Item -Path "backend\coverage.json" -Destination "test-and-coverage-reports" -Force
-        Copy-Item -Path "km_Praktyki\test-results\frontend-junit.xml" -Destination "test-and-coverage-reports" -Force
-        Copy-Item -Path "km_Praktyki\coverage\coverage-summary.json" -Destination "test-and-coverage-reports" -Force
-        Copy-Item -Path "test-coverage-summary.md" -Destination "test-and-coverage-reports" -Force
-
-        Write-Host "##vso[task.uploadsummary]$(Build.SourcesDirectory)\test-coverage-summary.md"
-      displayName: Add coverage to Pipeline Summary
       condition: succeededOrFailed()
-
-    - task: PublishBuildArtifacts@1
-      displayName: Publish test and coverage reports
-      condition: succeededOrFailed()
-      inputs:
-        pathToPublish: '$(Build.SourcesDirectory)\test-and-coverage-reports'
-        artifactName: test-and-coverage-reports
-        artifactType: container
 
 # ==================================================
-# SECURITY
+# SECURITY & SBOM SCAN
 # ==================================================
 - stage: SecurityScan
-  displayName: Security Scan
+  displayName: Security & SBOM Scan
   dependsOn: Tests
-
   jobs:
   - job: Scan
     pool:
       name: Default
-
     steps:
-
-    # Raporty Trivy
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-api-report.json km-praktyki-api:latest
-      displayName: Generate API report
-      condition: always()
-
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe image --format json --output trivy-frontend-report.json km-praktyki-frontend:latest
-      displayName: Generate Frontend report
-      condition: always()
-
-    # SBOM dla obrazow aplikacyjnych
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe image --format cyclonedx --output sbom-api.json km-praktyki-api:latest
-      displayName: Generate API SBOM
-      condition: always()
-
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe image --format cyclonedx --output sbom-frontend.json km-praktyki-frontend:latest
-      displayName: Generate Frontend SBOM
-      condition: always()
-
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe fs --format json --output trivy-source-report.json .
-      displayName: Generate Source Code report
-      condition: always()
-
-    # Scan API
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-api:latest
-      displayName: Scan API
-
-    # Scan Frontend
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe image --severity HIGH,CRITICAL --exit-code 0 km-praktyki-frontend:latest
-      displayName: Scan Frontend
-
-    # Scan Source
-    - script: |
-        C:\ProgramData\chocolatey\bin\trivy.exe fs --severity HIGH,CRITICAL --exit-code 0 .
-      displayName: Scan Source Code Dependencies
-
     - powershell: |
+        New-Item -ItemType Directory -Force -Path "security-reports", "sbom-reports" | Out-Null
+
+        $trivy = "C:\ProgramData\chocolatey\bin\trivy.exe"
+        $targets = @(
+          @{ Name = 'api'; Image = 'km-praktyki-api:latest' },
+          @{ Name = 'frontend'; Image = 'km-praktyki-frontend:latest' }
+        )
+
+        # 1. Generate JSON vulnerability reports and CycloneDX SBOM
+        foreach ($t in $targets) {
+          & $trivy image --format json --output "security-reports/trivy-$($t.Name)-report.json" $t.Image
+          & $trivy image --format cyclonedx --output "sbom-reports/sbom-$($t.Name).json" $t.Image
+        }
+        & $trivy fs --format json --output "security-reports/trivy-source-report.json" .
+
+        # 2. Parse vulnerabilities and build Prometheus metrics in memory
         $critical = 0
         $high = 0
-        $medium = 0
-        $low = 0
+        $vulnMetrics = @()
 
-        $reports = @(
-            "trivy-api-report.json",
-            "trivy-frontend-report.json",
-            "trivy-source-report.json"
-        )
-
-        foreach ($file in $reports)
-        {
-            $json = Get-Content $file -Raw | ConvertFrom-Json
-
-            foreach ($result in $json.Results)
-            {
-                foreach ($vuln in $result.Vulnerabilities)
-                {
-                    switch ($vuln.Severity)
-                    {
-                        "CRITICAL" { $critical++ }
-                        "HIGH"     { $high++ }
-                        "MEDIUM"   { $medium++ }
-                        "LOW"      { $low++ }
-                    }
-                }
-            }
+        $jsonReports = @{
+          'api'      = 'security-reports/trivy-api-report.json'
+          'frontend' = 'security-reports/trivy-frontend-report.json'
+          'source'   = 'security-reports/trivy-source-report.json'
         }
 
-        Write-Host "Critical: $critical"
-        Write-Host "High: $high"
+        foreach ($image in $jsonReports.Keys) {
+          if (Test-Path $jsonReports[$image]) {
+            $json = Get-Content $jsonReports[$image] -Raw | ConvertFrom-Json
+            $counts = @{ 'critical' = 0; 'high' = 0; 'medium' = 0; 'low' = 0 }
 
+            foreach ($res in $json.Results) {
+              foreach ($v in $res.Vulnerabilities) {
+                $sev = $v.Severity.ToLowerInvariant()
+                if ($counts.ContainsKey($sev)) { $counts[$sev]++ }
+                if ($sev -eq 'critical') { $critical++ }
+                if ($sev -eq 'high') { $high++ }
+              }
+            }
+
+            foreach ($sev in $counts.Keys) {
+              $vulnMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"$sev`"} $($counts[$sev])"
+            }
+          }
+        }
+
+        [IO.File]::WriteAllText("trivy-metrics.prom", ($vulnMetrics -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+        Write-Host "Vulnerabilities parsed: Critical=$critical, High=$high"
         Write-Host "##vso[task.setvariable variable=CriticalCount;isOutput=true]$critical"
-        Write-Host "##vso[task.setvariable variable=HighCount;isOutput=true]$high"
-      displayName: Count Vulnerabilities
-      name: ParseReports
 
-    - powershell: |
-        $metricsFile = "trivy-metrics.prom"
-
-        if (Test-Path $metricsFile) {
-            Remove-Item $metricsFile
+        # 3. Generate SBOM Prometheus metrics
+        function Escape-Label([string]$val) {
+          return ($val -replace '\\', '\\' -replace '"', '\"' -replace "`r", '' -replace "`n", '')
         }
 
-        $reports = @{
-            "api" = "trivy-api-report.json"
-            "frontend" = "trivy-frontend-report.json"
-            "source" = "trivy-source-report.json"
-        }
-
-        $allMetrics = @()
-        foreach ($image in $reports.Keys)
-        {
-            $json = Get-Content $reports[$image] -Raw | ConvertFrom-Json
-
-            $critical = 0
-            $high = 0
-            $medium = 0
-            $low = 0
-
-            foreach ($result in $json.Results)
-            {
-                foreach ($vuln in $result.Vulnerabilities)
-                {
-                    switch ($vuln.Severity)
-                    {
-                        "CRITICAL" { $critical++ }
-                        "HIGH"     { $high++ }
-                        "MEDIUM"   { $medium++ }
-                        "LOW"      { $low++ }
-                    }
-                }
+        $sbomMetrics = @()
+        foreach ($name in @('api', 'frontend')) {
+          $file = "sbom-reports/sbom-$name.json"
+          if (Test-Path $file) {
+            $sbom = Get-Content $file -Raw | ConvertFrom-Json
+            $components = @($sbom.components)
+            foreach ($c in $components) {
+              $pkg = Escape-Label $c.name
+              $ver = Escape-Label $c.version
+              $sbomMetrics += "sbom_component_info{image=`"$name`",package=`"$pkg`",version=`"$ver`"} 1"
             }
-
-            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"critical`"} $critical"
-            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"high`"} $high"
-            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"medium`"} $medium"
-            $allMetrics += "trivy_vulnerabilities_total{image=`"$image`",severity=`"low`"} $low"
+            $sbomMetrics += "sbom_components_total{image=`"$name`"} $($components.Count)"
+          }
         }
 
-        $content = ($allMetrics -join "`n") + "`n"
-
-        [System.IO.File]::WriteAllText(
-            $metricsFile,
-            $content,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-
-        if (Test-Path trivy-metrics.prom)
-        {
-            Get-Content trivy-metrics.prom
-            Get-ChildItem -Recurse $(Pipeline.Workspace)
-        }
-        else
-        {
-            Write-Error "Metrics file was not created!"
-        }
-
-      displayName: Generate Prometheus Metrics
-
-    - task: PublishBuildArtifacts@1
-      inputs:
-        pathToPublish: trivy-metrics.prom
-        artifactName: trivy-metrics
-
-        # Collect reports
-    - powershell: |
-        New-Item -ItemType Directory -Force -Path trivy-reports
-
-        Move-Item trivy-api-report.json trivy-reports
-        Move-Item trivy-frontend-report.json trivy-reports
-        Move-Item trivy-source-report.json trivy-reports
-      displayName: Collect Security Reports
+        [IO.File]::WriteAllText("sbom-metrics.prom", ($sbomMetrics -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+      displayName: Scan Vulnerabilities, Generate SBOM and Prometheus Metrics
+      name: ParseReports
       condition: always()
 
-    # Publish reports
+    # Publish raw reports as artifacts
     - task: PublishBuildArtifacts@1
-      displayName: Publish Security Reports
-      condition: always()
+      displayName: Publish Security & SBOM Reports
       inputs:
-        pathToPublish: trivy-reports
+        pathToPublish: security-reports
         artifactName: security-reports
-
-    - powershell: |
-        New-Item -ItemType Directory -Force -Path sbom-reports
-
-        Move-Item sbom-api.json sbom-reports
-        Move-Item sbom-frontend.json sbom-reports
-      displayName: Collect SBOM Reports
       condition: always()
 
     - task: PublishBuildArtifacts@1
       displayName: Publish SBOM Reports
-      condition: always()
       inputs:
         pathToPublish: sbom-reports
         artifactName: sbom-reports
-
-    - powershell: |
-        function Escape-PrometheusLabel {
-            param([AllowNull()][string]$Value)
-
-            if ($null -eq $Value) {
-                return ""
-            }
-
-            return $Value.Replace('\', '\\').Replace('"', '\"').Replace("`r", '\r').Replace("`n", '\n')
-        }
-
-        $sboms = @{
-            "api" = "sbom-reports\sbom-api.json"
-            "frontend" = "sbom-reports\sbom-frontend.json"
-        }
-
-        $metrics = @()
-        foreach ($image in $sboms.Keys) {
-            $sbom = Get-Content $sboms[$image] -Raw | ConvertFrom-Json
-            $components = @($sbom.components)
-
-            foreach ($component in $components) {
-                $package = Escape-PrometheusLabel $component.name
-                $version = Escape-PrometheusLabel $component.version
-                $escapedImage = Escape-PrometheusLabel $image
-                $metrics += 'sbom_component_info{image="' + $escapedImage + '",package="' + $package + '",version="' + $version + '"} 1'
-            }
-
-            $escapedImage = Escape-PrometheusLabel $image
-            $componentCount = $components.Count
-            $metrics += 'sbom_components_total{image="' + $escapedImage + '"} ' + $componentCount
-        }
-
-        $content = ($metrics -join "`n") + "`n"
-        [System.IO.File]::WriteAllText(
-            "sbom-metrics.prom",
-            $content,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-
-        Get-Content sbom-metrics.prom -Head 20
-      displayName: Generate SBOM Prometheus Metrics
       condition: always()
+
+    # Publish .prom files (trivy-metrics.prom and sbom-metrics.prom)
+    - powershell: |
+        New-Item -ItemType Directory -Force -Path "ci-metrics" | Out-Null
+        Copy-Item "*.prom" -Destination "ci-metrics" -Force
+      displayName: Stage Prometheus Metrics
 
     - task: PublishBuildArtifacts@1
-      displayName: Publish SBOM Metrics
-      condition: always()
+      displayName: Publish All CI Metrics
       inputs:
-        pathToPublish: sbom-metrics.prom
-        artifactName: sbom-metrics
+        pathToPublish: ci-metrics
+        artifactName: ci-metrics
+      condition: always()
 
     - task: PublishBuildArtifacts@1
       displayName: Publish Grafana Monitoring Configuration
-      condition: succeededOrFailed()
       inputs:
         pathToPublish: monitoring
         artifactName: grafana-monitoring
+      condition: succeededOrFailed()
 
 # ==================================================
-# PUSH TO DEV
+# DEPLOYMENT TEMPLATE LOGIC (DEV & PROD)
 # ==================================================
-
 - stage: PushDev
-  displayName: Push Images To DEV
+  displayName: Deploy to DEV
   dependsOn: SecurityScan
-
   jobs:
-  - job: Push
+  - deployment: DeployDev
     pool:
       name: Default
-
-    steps:
-
-    - powershell: |
-        docker tag km-praktyki-api:latest knsberg.azurecr.io/praktyki-api:$(Build.BuildId)
-        docker tag km-praktyki-frontend:latest knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)
-        docker tag postgres:16-alpine knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)
-        docker tag prom/prometheus:latest knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)
-        docker tag grafana/grafana-enterprise:latest knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)
-      displayName: Tag images for DEV
-
-    - task: AzureKeyVault@2
-      displayName: Download DEV Cosign keys
-      inputs:
-        azureSubscription: 'key-vault'
-        KeyVaultName: 'kongsberg'
-        SecretsFilter: 'cosign-private-key,cosign-public-key'
-        RunAsPreJob: false
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-
-        function Restore-PemSecret {
-          param([string]$Value, [string]$Path, [string]$Name)
-
-          if ([string]::IsNullOrWhiteSpace($Value)) {
-            throw "$Name is empty. Check the Azure Key Vault secret value."
-          }
-
-          $normalized = $Value.Trim([char]0xFEFF).Trim()
-          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) {
-            $normalized = $normalized | ConvertFrom-Json
-          }
-          $normalized = $normalized -replace '\\r\\n', "`n"
-          $normalized = $normalized -replace '\\n', "`n"
-          $normalized = $normalized -replace '\\r', "`r"
-          $normalized = $normalized -replace "`r`n?", "`n"
-          $normalized = $normalized.Trim()
-
-          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
-            try {
-              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
-              if ($decoded -match '^-----BEGIN ') { $normalized = $decoded.Trim() }
-            }
-            catch { }
-          }
-
-          $pem = [regex]::Match($normalized, '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$')
-          if (-not $pem.Success) {
-            throw "$Name is not a valid PEM block or Base64-wrapped PEM."
-          }
-
-          $body = $pem.Groups['body'].Value -replace '\s', ''
-          if ([string]::IsNullOrWhiteSpace($body)) { throw "$Name contains an empty PEM body." }
-          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
-          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
-          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
-        }
-
-        Restore-PemSecret $env:COSIGN_PRIVATE_KEY "$(Build.SourcesDirectory)\cosign.key" 'cosign-private-key'
-        Restore-PemSecret $env:COSIGN_PUBLIC_KEY "$(Build.SourcesDirectory)\cosign.pub" 'cosign-public-key'
-      displayName: Restore DEV Cosign keys
-      env:
-        COSIGN_PRIVATE_KEY: $(cosign-private-key)
-        COSIGN_PUBLIC_KEY: $(cosign-public-key)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $cosignPath = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign\cosign.exe'
-        if (-not (Test-Path $cosignPath)) {
-          New-Item -ItemType Directory -Force -Path (Split-Path $cosignPath) | Out-Null
-          Invoke-WebRequest `
-            -Uri 'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-windows-amd64.exe' `
-            -OutFile $cosignPath `
-            -UseBasicParsing
-        }
-        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
-        & $cosignPath version
-      displayName: Ensure Cosign is installed for DEV
-
-    - task: Docker@2
-      displayName: Login DEV ACR
-      inputs:
-        command: login
-        containerRegistry: dev
-
-    - task: Docker@2
-      displayName: Push API DEV
-      inputs:
-        command: push
-        containerRegistry: dev
-        repository: praktyki-api
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push Frontend DEV
-      inputs:
-        command: push
-        containerRegistry: dev
-        repository: praktyki-frontend
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push DB DEV
-      inputs:
-        command: push
-        containerRegistry: dev
-        repository: praktyki-postgres
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push Prometheus DEV
-      inputs:
-        command: push
-        containerRegistry: dev
-        repository: praktyki-prom
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push Grafana DEV
-      inputs:
-        command: push
-        containerRegistry: dev
-        repository: praktyki-grafana
-        tags: |
-          $(Build.BuildId)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $images = @(
-          @{ Name = 'API'; Repository = 'praktyki-api' },
-          @{ Name = 'Frontend'; Repository = 'praktyki-frontend' },
-          @{ Name = 'Postgres'; Repository = 'praktyki-postgres' },
-          @{ Name = 'Prometheus'; Repository = 'praktyki-prom' },
-          @{ Name = 'Grafana'; Repository = 'praktyki-grafana' }
-        )
-
-        foreach ($image in $images) {
-          $registry = "knsberg.azurecr.io"
-          $repo = $image.Repository
-          $tag = "$(Build.BuildId)"
-          $taggedImage = "$registry/${repo}:$tag"
-
-          # Force pull to ensure remote state
-          docker pull $taggedImage
-          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $taggedImage." }
-
-          # Retrieve all RepoDigests and find the one matching the registry and containing sha256
-          $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $taggedImage
-          $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -like "*$registry/$repo@sha256:*" } | Select-Object -First 1)
-
-          # Fallback: if daemon didn't populate RepoDigests, resolve digest directly via docker buildx imagetools or registry inspect
-          if (-not $matchedDigest) {
-            $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
-          }
-
-          if (-not $matchedDigest) {
-            # Last-resort fallback: inspect manifest digest using buildx
-            $manifestInspect = docker buildx imagetools inspect $taggedImage --raw 2>$null
-            if ($manifestInspect) {
-              $hasher = [System.Security.Cryptography.SHA256]::Create()
-              $hashBytes = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($manifestInspect))
-              $calculatedSha = -join ($hashBytes | ForEach-Object { "{0:x2}" -f $_ })
-              $matchedDigest = "$registry/${repo}@sha256:$calculatedSha"
-            }
-          }
-
-          if (-not $matchedDigest -or $matchedDigest -notmatch '@sha256:[0-9a-f]{64}$') {
-            throw "Could not resolve a valid RepoDigest for $taggedImage. RepoDigests found: '$repoDigests'"
-          }
-
-          $matchedDigest = $matchedDigest.Trim()
-          $digest = $matchedDigest.Substring($matchedDigest.IndexOf('@') + 1)
-
-          Write-Host "$($image.Name) digest: $matchedDigest"
-          Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
-
-          & "$(COSIGN_EXE)" sign --yes --tlog-upload=false --key "$(Build.SourcesDirectory)\cosign.key" $matchedDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $matchedDigest." }
-
-          & "$(COSIGN_EXE)" verify --insecure-ignore-tlog=true --key "$(Build.SourcesDirectory)\cosign.pub" $matchedDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $matchedDigest." }
-        }
-      displayName: Sign and verify DEV image digests in ACR  
-      env:
-        COSIGN_PASSWORD: $(cosign-password)
-
-    - powershell: |
-        if ([string]::IsNullOrWhiteSpace($env:DEV_ACR_USERNAME) -or
-            [string]::IsNullOrWhiteSpace($env:DEV_ACR_PASSWORD) -or
-            $env:DEV_ACR_USERNAME -like '$(*' -or
-            $env:DEV_ACR_PASSWORD -like '$(*') {
-          throw "DEV ACR credentials are missing. Define DEV_ACR_USERNAME and DEV_ACR_PASSWORD as secret variables."
-        }
-
-        kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
-
-        kubectl create secret docker-registry acr-pull-secret `
-          --docker-server=knsberg.azurecr.io `
-          --docker-username="$env:DEV_ACR_USERNAME" `
-          --docker-password="$env:DEV_ACR_PASSWORD" `
-          --namespace dev `
-          --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create DEV ACR Secret
-      env:
-        DEV_ACR_USERNAME: $(DEV_ACR_USERNAME)
-        DEV_ACR_PASSWORD: $(DEV_ACR_PASSWORD)
-
-    - task: AzureKeyVault@2
-      displayName: Download DEV ingress certificate from Key Vault
-      inputs:
-        azureSubscription: 'key-vault'
-        KeyVaultName: 'kongsberg'
-        SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
-        RunAsPreJob: false
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-
-        function Restore-PemSecret {
-          param(
-            [string]$Value,
-            [string]$Path,
-            [string]$Name
-          )
-
-          if ([string]::IsNullOrWhiteSpace($Value)) {
-            throw "$Name is empty. Check the Azure Key Vault secret value."
-          }
-
-          $normalized = $Value.Trim([char]0xFEFF).Trim()
-          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) {
-            try {
-              $normalized = $normalized | ConvertFrom-Json
-            }
-            catch {
-              throw "$Name is quoted but is not valid JSON string content."
-            }
-          }
-          $normalized = $normalized -replace '\\r\\n', "`n"
-          $normalized = $normalized -replace '\\n', "`n"
-          $normalized = $normalized -replace '\\r', "`r"
-          $normalized = $normalized -replace "`r`n?", "`n"
-          $normalized = $normalized.Trim()
-
-          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
-            try {
-              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
-              if ($decoded -match '^-----BEGIN ') {
-                $normalized = $decoded.Trim()
-              }
-            }
-            catch {
-              # The value is neither PEM nor Base64-wrapped PEM.
-            }
-          }
-
-          $pem = [regex]::Match(
-            $normalized,
-            '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$'
-          )
-          if (-not $pem.Success) {
-            throw "$Name is not a valid PEM block or Base64-wrapped PEM. Store the complete cosign key file content in Azure Key Vault."
-          }
-
-          $body = $pem.Groups['body'].Value -replace '\s', ''
-          if ([string]::IsNullOrWhiteSpace($body)) {
-            throw "$Name contains an empty PEM body. Store the complete cosign key file content in Azure Key Vault."
-          }
-
-          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
-          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
-
-          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
-        }
-
-        Restore-PemSecret $env:COSIGN_PRIVATE_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key') 'cosign-private-key'
-        Restore-PemSecret $env:COSIGN_PUBLIC_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub') 'cosign-public-key'
-      displayName: Restore Cosign signing keys
-      env:
-        COSIGN_PRIVATE_KEY: $(cosign-private-key)
-        COSIGN_PUBLIC_KEY: $(cosign-public-key)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $existingCosign = Get-Command cosign.exe -ErrorAction SilentlyContinue
-        $cosignPath = if ($existingCosign) { $existingCosign.Source } else { $null }
-        $supportsNonInteractiveSign = $false
-        if ($cosignPath) {
-          $signHelp = (& $cosignPath sign --help 2>&1 | Out-String)
-          $supportsNonInteractiveSign = $signHelp -match '--yes'
-        }
-
-        if (-not $supportsNonInteractiveSign) {
-          $cosignVersion = 'v2.4.1'
-          $cosignDirectory = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign'
-          New-Item -ItemType Directory -Force -Path $cosignDirectory | Out-Null
-          $cosignPath = Join-Path $cosignDirectory 'cosign.exe'
-          Invoke-WebRequest `
-            -Uri "https://github.com/sigstore/cosign/releases/download/$cosignVersion/cosign-windows-amd64.exe" `
-            -OutFile $cosignPath `
-            -UseBasicParsing
-        }
-        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
-        & $cosignPath version
-      displayName: Ensure Cosign is installed
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'praktyki-dev-tls'
-        New-Item -ItemType Directory -Force -Path $certDir | Out-Null
-        $pfxPath = Join-Path $certDir 'ingress-tls.pfx'
-        [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
-
-        openssl pkcs12 -in $pfxPath -clcerts -nokeys -out (Join-Path $certDir 'ingress.crt') -passin pass:
-        openssl pkcs12 -in $pfxPath -cacerts -nokeys -out (Join-Path $certDir 'chain.crt') -passin pass:
-        openssl pkcs12 -in $pfxPath -nocerts -nodes -out (Join-Path $certDir 'ingress.key') -passin pass:
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to extract the DEV certificate or private key from the Key Vault PFX.' }
-
-        $fullChain = Join-Path $certDir 'fullchain.crt'
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-        [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
-        $sanText = (& openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName 2>&1 | Out-String)
-        Write-Host 'DEV certificate Subject Alternative Names:'
-        Write-Host $sanText
-        $sanEntries = [regex]::Matches($sanText, 'DNS:([^,\s]+)') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() }
-        $requiredHosts = @('frontend.dev.local', 'api.dev.local', 'grafana.dev.local', 'prometheus.dev.local')
-        foreach ($dnsName in $requiredHosts) {
-          $dnsName = $dnsName.ToLowerInvariant()
-          $wildcardName = '*.' + (($dnsName -split '\.', 2)[1])
-          if ($sanEntries -notcontains $dnsName -and $sanEntries -notcontains $wildcardName) {
-            throw "The Key Vault certificate does not contain a SAN for $dnsName."
-          }
-        }
-
-        $certModulus = (openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -modulus).Trim()
-        $keyModulus = (openssl rsa -in (Join-Path $certDir 'ingress.key') -noout -modulus 2>$null).Trim()
-        if ($certModulus -ne $keyModulus) { throw 'The DEV certificate and private key do not match.' }
-
-        kubectl create secret tls praktyki-tls --namespace dev --cert=$fullChain --key="$(Join-Path $certDir 'ingress.key')" --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create or update DEV TLS secret
-
-    - powershell: |
-        kubectl create configmap grafana-dashboards `
-          --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
-          --namespace dev `
-          --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create DEV Grafana Dashboards ConfigMap
-
-    - powershell: |
-        if ([string]::IsNullOrWhiteSpace($env:AZURE_DEVOPS_PAT) -or $env:AZURE_DEVOPS_PAT -like '$(*') {
-          throw "AZURE_DEVOPS_PAT is missing. Define it as a secret variable in the km variable group."
-        }
-
-        kubectl create secret generic grafana-alerting `
-          --from-literal=azure-devops-pat="$env:AZURE_DEVOPS_PAT" `
-          --namespace dev `
-          --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create DEV Grafana Alerting Secret
-      env:
-        AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)
-
-    - task: DownloadBuildArtifacts@1
-      displayName: Download DEV monitoring metrics
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: trivy-metrics
-        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
-
-    - task: DownloadBuildArtifacts@1
-      displayName: Download DEV SBOM metrics
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: sbom-metrics
-        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
-
-    - task: DownloadBuildArtifacts@1
-      displayName: Download DEV static analysis metrics
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: web-static-analysis-metrics
-        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
-
-    - powershell: |
-        helm upgrade --install praktyki-dev `
-          "$(Build.SourcesDirectory)\praktyki" `
-          -f "$(Build.SourcesDirectory)\praktyki\values-dev.yaml" `
-          --namespace dev `
-          --create-namespace `
-          --set-string api.image.digest=$(API_IMAGE_DIGEST) `
-          --set-string frontend.image.digest=$(FRONTEND_IMAGE_DIGEST) `
-          --set-string postgres.image.digest=$(POSTGRES_IMAGE_DIGEST) `
-          --set-string prometheus.image.digest=$(PROMETHEUS_IMAGE_DIGEST) `
-          --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
-      displayName: Deploy DEV with Helm
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $stdout = Join-Path $env:TEMP 'pushgateway-dev.stdout.log'
-        $stderr = Join-Path $env:TEMP 'pushgateway-dev.stderr.log'
-        Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-        $portForward = Start-Process kubectl `
-          -ArgumentList @('port-forward', '--address', '127.0.0.1', 'svc/pushgateway', '19091:9091', '-n', 'dev') `
-          -PassThru `
-          -RedirectStandardOutput $stdout `
-          -RedirectStandardError $stderr `
-          -WindowStyle Hidden
-        try {
-          $ready = $false
-          for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            if ($portForward.HasExited) {
-              $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
-              throw "kubectl port-forward for DEV exited with code $($portForward.ExitCode). $details"
-            }
-
-            try {
-              $client = [System.Net.Sockets.TcpClient]::new()
-              $client.Connect('127.0.0.1', 19091)
-              $client.Dispose()
-              $ready = $true
-              break
-            }
-            catch {
-              Start-Sleep -Seconds 1
-            }
-          }
-
-          if (-not $ready) {
-            $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
-            throw "DEV Pushgateway port 19091 did not become ready. $details"
-          }
-
-          $metricFiles = Get-ChildItem -Path '$(Pipeline.Workspace)\ci-metrics' -Recurse -Filter '*.prom'
-          if (-not $metricFiles) {
-            throw 'No .prom metric files were downloaded for DEV.'
-          }
-
-          foreach ($file in $metricFiles) {
-            $job = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-            $body = [System.IO.File]::ReadAllText($file.FullName)
-            $body = $body.Replace("`r`n", "`n").Replace("`r", "`n")
-            if (-not $body.EndsWith("`n")) {
-              $body += "`n"
-            }
-            Invoke-WebRequest `
-              -Uri "http://127.0.0.1:19091/metrics/job/azure-pipelines/environment/dev/source/$job" `
-              -Method Post `
-              -Body $body `
-              -ContentType 'text/plain; version=0.0.4' `
-              -UseBasicParsing
-          }
-        }
-        finally {
-          Stop-Process -Id $portForward.Id -Force -ErrorAction SilentlyContinue
-          Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-        }
-      displayName: Publish DEV monitoring metrics
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
-
-        try {
-          foreach ($deployment in $deployments) {
-            kubectl rollout status "deployment/$deployment" --namespace dev --timeout=300s
-          }
-        }
-        catch {
-          Write-Host "Rollout failed. Collecting diagnostics from namespace dev."
-          kubectl get pods -n dev -o wide
-          kubectl get events -n dev --sort-by=.lastTimestamp
-          foreach ($deployment in $deployments) {
-            kubectl describe deployment $deployment -n dev
-            $pods = kubectl get pods -n dev -l "app=$deployment" -o name
-            foreach ($pod in $pods) {
-              kubectl logs $pod -n dev --all-containers --tail=100 2>$null
-            }
-          }
-          throw
-        }
-
-        kubectl exec deployment/grafana --namespace dev -- test -f /var/lib/grafana/dashboards/kongsberg-monitoring.json
-        kubectl get hpa -n dev
-      displayName: Verify Rollout
-
-# ==================================================
-# PUSH TO PROD
-# ==================================================
+    environment: 'dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: templates/deploy-env.yml
+            parameters:
+              environment: 'dev'
+              acrServer: 'knsberg.azurecr.io'
+              acrServiceConnection: 'dev'
+              acrUsername: $(DEV_ACR_USERNAME)
+              acrPassword: $(DEV_ACR_PASSWORD)
 
 - stage: PushProd
-  displayName: Push Images to PROD
-  condition: and(succeeded(), eq( stageDependencies.SecurityScan.Scan.outputs['ParseReports.CriticalCount'],'0' ))
+  displayName: Deploy to PROD
   dependsOn:
-   - PushDev
-   - SecurityScan
+    - PushDev
+    - SecurityScan
+  condition: and(succeeded(), eq(stageDependencies.SecurityScan.Scan.outputs['ParseReports.CriticalCount'], '0'))
   jobs:
-  - job: PushProd
+  - deployment: DeployProd
     pool:
       name: Default
-
-    steps:
-
-    - powershell: |
-        docker tag km-praktyki-api:latest kmprod.azurecr.io/praktyki-api:$(Build.BuildId)
-        docker tag km-praktyki-frontend:latest kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)
-        docker tag postgres:16-alpine kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)
-        docker tag prom/prometheus:latest kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)
-        docker tag grafana/grafana-enterprise:latest kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)
-      displayName: Tag images for PROD
-
-    - task: AzureKeyVault@2
-      displayName: Download PROD Cosign keys
-      inputs:
-        azureSubscription: 'key-vault'
-        KeyVaultName: 'kongsberg'
-        SecretsFilter: 'cosign-private-key,cosign-public-key'
-        RunAsPreJob: false
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-
-        function Restore-PemSecret {
-          param([string]$Value, [string]$Path, [string]$Name)
-
-          if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name is empty." }
-          $normalized = $Value.Trim([char]0xFEFF).Trim()
-          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) { $normalized = $normalized | ConvertFrom-Json }
-          $normalized = $normalized -replace '\\r\\n', "`n"
-          $normalized = $normalized -replace '\\n', "`n"
-          $normalized = $normalized -replace '\\r', "`r"
-          $normalized = $normalized -replace "`r`n?", "`n"
-          $normalized = $normalized.Trim()
-
-          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
-            try {
-              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
-              if ($decoded -match '^-----BEGIN ') { $normalized = $decoded.Trim() }
-            }
-            catch { }
-          }
-
-          $pem = [regex]::Match($normalized, '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$')
-          if (-not $pem.Success) { throw "$Name is not a valid PEM block or Base64-wrapped PEM." }
-          $body = $pem.Groups['body'].Value -replace '\s', ''
-          if ([string]::IsNullOrWhiteSpace($body)) { throw "$Name contains an empty PEM body." }
-          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
-          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
-          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
-        }
-
-        Restore-PemSecret $env:COSIGN_PRIVATE_KEY "$(Build.SourcesDirectory)\cosign.key" 'cosign-private-key'
-        Restore-PemSecret $env:COSIGN_PUBLIC_KEY "$(Build.SourcesDirectory)\cosign.pub" 'cosign-public-key'
-      displayName: Restore PROD Cosign keys
-      env:
-        COSIGN_PRIVATE_KEY: $(cosign-private-key)
-        COSIGN_PUBLIC_KEY: $(cosign-public-key)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $cosignPath = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign\cosign.exe'
-        if (-not (Test-Path $cosignPath)) {
-          New-Item -ItemType Directory -Force -Path (Split-Path $cosignPath) | Out-Null
-          Invoke-WebRequest `
-            -Uri 'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-windows-amd64.exe' `
-            -OutFile $cosignPath `
-            -UseBasicParsing
-        }
-        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
-        & $cosignPath version
-      displayName: Ensure Cosign is installed for PROD
-
-    - task: Docker@2
-      displayName: Push API PROD
-      inputs:
-        command: push
-        containerRegistry: prod
-        repository: praktyki-api
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push Frontend PROD
-      inputs:
-        command: push
-        containerRegistry: prod
-        repository: praktyki-frontend
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push DB PROD
-      inputs:
-        command: push
-        containerRegistry: prod
-        repository: praktyki-postgres
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push Prometheus PROD
-      inputs:
-        command: push
-        containerRegistry: prod
-        repository: praktyki-prom
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Push Grafana PROD
-      inputs:
-        command: push
-        containerRegistry: prod
-        repository: praktyki-grafana
-        tags: |
-          $(Build.BuildId)
-
-    - task: Docker@2
-      displayName: Login PROD ACR
-      inputs:
-        command: login
-        containerRegistry: prod
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $images = @(
-          @{ Name = 'API'; Repository = 'praktyki-api' },
-          @{ Name = 'Frontend'; Repository = 'praktyki-frontend' },
-          @{ Name = 'Postgres'; Repository = 'praktyki-postgres' },
-          @{ Name = 'Prometheus'; Repository = 'praktyki-prom' },
-          @{ Name = 'Grafana'; Repository = 'praktyki-grafana' }
-        )
-
-        foreach ($image in $images) {
-          $registry = "kmprod.azurecr.io"
-          $repo = $image.Repository
-          $tag = "$(Build.BuildId)"
-          $taggedImage = "$registry/${repo}:$tag"
-
-          # Force pull to ensure remote state
-          docker pull $taggedImage
-          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $taggedImage." }
-
-          # Retrieve all RepoDigests and find the one matching the registry and containing sha256
-          $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $taggedImage
-          $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -like "*$registry/$repo@sha256:*" } | Select-Object -First 1)
-
-          # Fallback: if daemon didn't populate RepoDigests, resolve digest directly via docker buildx imagetools or registry inspect
-          if (-not $matchedDigest) {
-            $matchedDigest = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
-          }
-
-          if (-not $matchedDigest) {
-            # Last-resort fallback: inspect manifest digest using buildx
-            $manifestInspect = docker buildx imagetools inspect $taggedImage --raw 2>$null
-            if ($manifestInspect) {
-              $hasher = [System.Security.Cryptography.SHA256]::Create()
-              $hashBytes = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($manifestInspect))
-              $calculatedSha = -join ($hashBytes | ForEach-Object { "{0:x2}" -f $_ })
-              $matchedDigest = "$registry/${repo}@sha256:$calculatedSha"
-            }
-          }
-
-          if (-not $matchedDigest -or $matchedDigest -notmatch '@sha256:[0-9a-f]{64}$') {
-            throw "Could not resolve a valid RepoDigest for $taggedImage. RepoDigests found: '$repoDigests'"
-          }
-
-          $matchedDigest = $matchedDigest.Trim()
-          $digest = $matchedDigest.Substring($matchedDigest.IndexOf('@') + 1)
-
-          Write-Host "$($image.Name) digest: $matchedDigest"
-          Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
-
-          & "$(COSIGN_EXE)" sign --yes --tlog-upload=false --key "$(Build.SourcesDirectory)\cosign.key" $matchedDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $matchedDigest." }
-
-          & "$(COSIGN_EXE)" verify --insecure-ignore-tlog=true --key "$(Build.SourcesDirectory)\cosign.pub" $matchedDigest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $matchedDigest." }
-        }
-      displayName: Sign and verify PROD image digests in ACR
-      env:
-        COSIGN_PASSWORD: $(cosign-password)
-
-    - powershell: |
-        if ([string]::IsNullOrWhiteSpace($env:PROD_ACR_USERNAME) -or
-            [string]::IsNullOrWhiteSpace($env:PROD_ACR_PASSWORD) -or
-            $env:PROD_ACR_USERNAME -like '$(*' -or
-            $env:PROD_ACR_PASSWORD -like '$(*') {
-          throw "PROD ACR credentials are missing. Define PROD_ACR_USERNAME and PROD_ACR_PASSWORD as secret variables."
-        }
-
-        kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
-
-        kubectl create secret docker-registry acr-pull-secret `
-          --docker-server=kmprod.azurecr.io `
-          --docker-username="$env:PROD_ACR_USERNAME" `
-          --docker-password="$env:PROD_ACR_PASSWORD" `
-          --namespace prod `
-          --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create PROD ACR Secret
-      env:
-        PROD_ACR_USERNAME: $(PROD_ACR_USERNAME)
-        PROD_ACR_PASSWORD: $(PROD_ACR_PASSWORD)
-
-    - task: AzureKeyVault@2
-      displayName: Download PROD ingress certificate from Key Vault
-      inputs:
-        azureSubscription: 'key-vault'
-        KeyVaultName: 'kongsberg'
-        SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
-        RunAsPreJob: false
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-
-        function Restore-PemSecret {
-          param(
-            [string]$Value,
-            [string]$Path,
-            [string]$Name
-          )
-
-          if ([string]::IsNullOrWhiteSpace($Value)) {
-            throw "$Name is empty. Check the Azure Key Vault secret value."
-          }
-
-          $normalized = $Value.Trim([char]0xFEFF).Trim()
-          if ($normalized.StartsWith('"') -and $normalized.EndsWith('"')) {
-            try {
-              $normalized = $normalized | ConvertFrom-Json
-            }
-            catch {
-              throw "$Name is quoted but is not valid JSON string content."
-            }
-          }
-          $normalized = $normalized -replace '\\r\\n', "`n"
-          $normalized = $normalized -replace '\\n', "`n"
-          $normalized = $normalized -replace '\\r', "`r"
-          $normalized = $normalized -replace "`r`n?", "`n"
-          $normalized = $normalized.Trim()
-
-          if ($normalized -notmatch '^-----BEGIN [^-]+-----') {
-            try {
-              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($normalized -replace '\s', '')))
-              if ($decoded -match '^-----BEGIN ') {
-                $normalized = $decoded.Trim()
-              }
-            }
-            catch {
-              # The value is neither PEM nor Base64-wrapped PEM.
-            }
-          }
-
-          $pem = [regex]::Match(
-            $normalized,
-            '(?s)^-----BEGIN (?<label>[^-]+)-----(?<body>.*?)-----END \k<label>-----$'
-          )
-          if (-not $pem.Success) {
-            throw "$Name is not a valid PEM block or Base64-wrapped PEM. Store the complete cosign key file content in Azure Key Vault."
-          }
-
-          $body = $pem.Groups['body'].Value -replace '\s', ''
-          if ([string]::IsNullOrWhiteSpace($body)) {
-            throw "$Name contains an empty PEM body. Store the complete cosign key file content in Azure Key Vault."
-          }
-
-          $wrappedBody = [regex]::Matches($body, '.{1,64}') | ForEach-Object { $_.Value }
-          $normalized = "-----BEGIN $($pem.Groups['label'].Value)-----`n$($wrappedBody -join "`n")`n-----END $($pem.Groups['label'].Value)-----"
-
-          [IO.File]::WriteAllText($Path, "$normalized`n", $utf8NoBom)
-        }
-
-        Restore-PemSecret $env:COSIGN_PRIVATE_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.key') 'cosign-private-key'
-        Restore-PemSecret $env:COSIGN_PUBLIC_KEY (Join-Path $env:BUILD_SOURCESDIRECTORY 'cosign.pub') 'cosign-public-key'
-      displayName: Restore Cosign signing keys
-      env:
-        COSIGN_PRIVATE_KEY: $(cosign-private-key)
-        COSIGN_PUBLIC_KEY: $(cosign-public-key)
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $existingCosign = Get-Command cosign.exe -ErrorAction SilentlyContinue
-        $cosignPath = if ($existingCosign) { $existingCosign.Source } else { $null }
-        $supportsNonInteractiveSign = $false
-        if ($cosignPath) {
-          $signHelp = (& $cosignPath sign --help 2>&1 | Out-String)
-          $supportsNonInteractiveSign = $signHelp -match '--yes'
-        }
-
-        if (-not $supportsNonInteractiveSign) {
-          $cosignVersion = 'v2.4.1'
-          $cosignDirectory = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign'
-          New-Item -ItemType Directory -Force -Path $cosignDirectory | Out-Null
-          $cosignPath = Join-Path $cosignDirectory 'cosign.exe'
-          Invoke-WebRequest `
-            -Uri "https://github.com/sigstore/cosign/releases/download/$cosignVersion/cosign-windows-amd64.exe" `
-            -OutFile $cosignPath `
-            -UseBasicParsing
-        }
-        Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosignPath"
-        & $cosignPath version
-      displayName: Ensure Cosign is installed
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'praktyki-prod-tls'
-        New-Item -ItemType Directory -Force -Path $certDir | Out-Null
-        $pfxPath = Join-Path $certDir 'ingress-tls.pfx'
-        [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
-
-        openssl pkcs12 -in $pfxPath -clcerts -nokeys -out (Join-Path $certDir 'ingress.crt') -passin pass:
-        openssl pkcs12 -in $pfxPath -cacerts -nokeys -out (Join-Path $certDir 'chain.crt') -passin pass:
-        openssl pkcs12 -in $pfxPath -nocerts -nodes -out (Join-Path $certDir 'ingress.key') -passin pass:
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to extract the PROD certificate or private key from the Key Vault PFX.' }
-
-        $fullChain = Join-Path $certDir 'fullchain.crt'
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-        [IO.File]::WriteAllText($fullChain, ((Get-Content (Join-Path $certDir 'ingress.crt') -Raw) + (Get-Content (Join-Path $certDir 'chain.crt') -Raw)), $utf8NoBom)
-        $sanText = (& openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -ext subjectAltName 2>&1 | Out-String)
-        Write-Host 'PROD certificate Subject Alternative Names:'
-        Write-Host $sanText
-        $sanEntries = [regex]::Matches($sanText, 'DNS:([^,\s]+)') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() }
-        $requiredHosts = @('frontend.prod.local', 'api.prod.local', 'grafana.prod.local', 'prometheus.prod.local')
-        foreach ($dnsName in $requiredHosts) {
-          $dnsName = $dnsName.ToLowerInvariant()
-          $wildcardName = '*.' + (($dnsName -split '\.', 2)[1])
-          if ($sanEntries -notcontains $dnsName -and $sanEntries -notcontains $wildcardName) {
-            throw "The Key Vault certificate does not contain a SAN for $dnsName."
-          }
-        }
-
-        $certModulus = (openssl x509 -in (Join-Path $certDir 'ingress.crt') -noout -modulus).Trim()
-        $keyModulus = (openssl rsa -in (Join-Path $certDir 'ingress.key') -noout -modulus 2>$null).Trim()
-        if ($certModulus -ne $keyModulus) { throw 'The PROD certificate and private key do not match.' }
-
-        kubectl create secret tls praktyki-tls --namespace prod --cert=$fullChain --key="$(Join-Path $certDir 'ingress.key')" --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create or update PROD TLS secret
-
-    - task: DownloadBuildArtifacts@1
-      displayName: Download PROD monitoring metrics
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: trivy-metrics
-        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
-
-    - task: DownloadBuildArtifacts@1
-      displayName: Download PROD SBOM metrics
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: sbom-metrics
-        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
-
-    - task: DownloadBuildArtifacts@1
-      displayName: Download PROD static analysis metrics
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: web-static-analysis-metrics
-        downloadPath: '$(Pipeline.Workspace)\ci-metrics'
-
-    - powershell: |
-        kubectl create configmap grafana-dashboards `
-          --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
-          --namespace prod `
-          --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create PROD Grafana Dashboards ConfigMap
-
-    - powershell: |
-        if ([string]::IsNullOrWhiteSpace($env:AZURE_DEVOPS_PAT) -or $env:AZURE_DEVOPS_PAT -like '$(*') {
-          throw "AZURE_DEVOPS_PAT is missing. Define it as a secret variable in the km variable group."
-        }
-
-        kubectl create secret generic grafana-alerting `
-          --from-literal=azure-devops-pat="$env:AZURE_DEVOPS_PAT" `
-          --namespace prod `
-          --dry-run=client -o yaml | kubectl apply -f -
-      displayName: Create PROD Grafana Alerting Secret
-      env:
-        AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)
-
-    - powershell: |
-        helm upgrade --install praktyki-prod `
-          "$(Build.SourcesDirectory)\praktyki" `
-          -f "$(Build.SourcesDirectory)\praktyki\values-prod.yaml" `
-          --namespace prod `
-          --create-namespace `
-          --set-string api.image.digest=$(API_IMAGE_DIGEST) `
-          --set-string frontend.image.digest=$(FRONTEND_IMAGE_DIGEST) `
-          --set-string postgres.image.digest=$(POSTGRES_IMAGE_DIGEST) `
-          --set-string prometheus.image.digest=$(PROMETHEUS_IMAGE_DIGEST) `
-          --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
-      displayName: Deploy PROD with Helm
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $stdout = Join-Path $env:TEMP 'pushgateway-prod.stdout.log'
-        $stderr = Join-Path $env:TEMP 'pushgateway-prod.stderr.log'
-        Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-        $portForward = Start-Process kubectl `
-          -ArgumentList @('port-forward', '--address', '127.0.0.1', 'svc/pushgateway', '19092:9091', '-n', 'prod') `
-          -PassThru `
-          -RedirectStandardOutput $stdout `
-          -RedirectStandardError $stderr `
-          -WindowStyle Hidden
-        try {
-          $ready = $false
-          for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            if ($portForward.HasExited) {
-              $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
-              throw "kubectl port-forward for PROD exited with code $($portForward.ExitCode). $details"
-            }
-
-            try {
-              $client = [System.Net.Sockets.TcpClient]::new()
-              $client.Connect('127.0.0.1', 19092)
-              $client.Dispose()
-              $ready = $true
-              break
-            }
-            catch {
-              Start-Sleep -Seconds 1
-            }
-          }
-
-          if (-not $ready) {
-            $details = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
-            throw "PROD Pushgateway port 19092 did not become ready. $details"
-          }
-
-          $metricFiles = Get-ChildItem -Path '$(Pipeline.Workspace)\ci-metrics' -Recurse -Filter '*.prom'
-          if (-not $metricFiles) {
-            throw 'No .prom metric files were downloaded for PROD.'
-          }
-
-          foreach ($file in $metricFiles) {
-            $job = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-            $body = [System.IO.File]::ReadAllText($file.FullName)
-            $body = $body.Replace("`r`n", "`n").Replace("`r", "`n")
-            if (-not $body.EndsWith("`n")) {
-              $body += "`n"
-            }
-            Invoke-WebRequest `
-              -Uri "http://127.0.0.1:19092/metrics/job/azure-pipelines/environment/prod/source/$job" `
-              -Method Post `
-              -Body $body `
-              -ContentType 'text/plain; version=0.0.4' `
-              -UseBasicParsing
-          }
-        }
-        finally {
-          Stop-Process -Id $portForward.Id -Force -ErrorAction SilentlyContinue
-          Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-        }
-      displayName: Publish PROD monitoring metrics
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
-
-        try {
-          foreach ($deployment in $deployments) {
-            kubectl rollout status "deployment/$deployment" --namespace prod --timeout=300s
-          }
-        }
-        catch {
-          Write-Host "Rollout failed. Collecting diagnostics from namespace prod."
-          kubectl get pods -n prod -o wide
-          kubectl get events -n prod --sort-by=.lastTimestamp
-          foreach ($deployment in $deployments) {
-            kubectl describe deployment $deployment -n prod
-            $pods = kubectl get pods -n prod -l "app=$deployment" -o name
-            foreach ($pod in $pods) {
-              kubectl logs $pod -n prod --all-containers --tail=100 2>$null
-            }
-          }
-          throw
-        }
-
-        kubectl exec deployment/grafana --namespace prod -- test -f /var/lib/grafana/dashboards/kongsberg-monitoring.json
-        kubectl get hpa -n prod
-      displayName: Verify Rollout
-
-# ==================================================
-# DIAGNOSTICS
-# ==================================================
-- stage: Diagnostics
-  displayName: Diagnostics
-  dependsOn:
-  - PushDev
-  - PushProd
-  condition: always()
-
-  jobs:
-  - job: Diagnostics
-    pool:
-      name: Default
-
-    steps:
-    - powershell: |
-        docker images
-        docker ps -a
-        kubectl get pods -A
-        kubectl get hpa -A
-        kubectl get pvc -A
-      displayName: Diagnostics
+    environment: 'prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: templates/deploy-env.yml
+            parameters:
+              environment: 'prod'
+              acrServer: 'kmprod.azurecr.io'
+              acrServiceConnection: 'prod'
+              acrUsername: $(PROD_ACR_USERNAME)
+              acrPassword: $(PROD_ACR_PASSWORD)

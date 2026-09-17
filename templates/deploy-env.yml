@@ -1,0 +1,103 @@
+parameters:
+  - name: environment
+    type: string
+  - name: acrServer
+    type: string
+  - name: acrServiceConnection
+    type: string
+  - name: acrUsername
+    type: string
+  - name: acrPassword
+    type: string
+
+steps:
+- checkout: self
+
+- task: Docker@2
+  displayName: Login to ACR
+  inputs:
+    command: login
+    containerRegistry: ${{ parameters.acrServiceConnection }}
+
+- powershell: |
+    $images = @('api', 'frontend', 'postgres', 'prom', 'grafana')
+    $sourceNames = @{
+      'api' = 'km-praktyki-api:latest'
+      'frontend' = 'km-praktyki-frontend:latest'
+      'postgres' = 'postgres:16-alpine'
+      'prom' = 'prom/prometheus:latest'
+      'grafana' = 'grafana/grafana-enterprise:latest'
+    }
+
+    foreach ($name in $images) {
+      $target = "${{ parameters.acrServer }}/praktyki-$name:$(Build.BuildId)"
+      docker tag $sourceNames[$name] $target
+      docker push $target
+      if ($LASTEXITCODE -ne 0) { throw "Failed to push $target" }
+
+      # Pull remote digest & export as output variable
+      $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $target
+      $matched = ($repoDigests -split '\s+' | Where-Object { $_ -like "*${{ parameters.acrServer }}/*@sha256:*" } | Select-Object -First 1)
+      $digest = $matched.Substring($matched.IndexOf('@') + 1)
+      Write-Host "##vso[task.setvariable variable=$($name.ToUpper())_IMAGE_DIGEST]$digest"
+    }
+  displayName: Tag, Push and Capture Digests
+
+- task: AzureKeyVault@2
+  displayName: Download Ingress TLS and Cosign Keys
+  inputs:
+    azureSubscription: 'key-vault'
+    KeyVaultName: 'kongsberg'
+    SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
+    RunAsPreJob: false
+
+- powershell: |
+    # 1. Setup Cosign keys
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.key", "$env:COSIGN_PRIVATE_KEY`n", $utf8)
+    [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.pub", "$env:COSIGN_PUBLIC_KEY`n", $utf8)
+
+    # 2. Extract TLS Cert
+    $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'tls'
+    New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+    $pfxPath = Join-Path $certDir 'tls.pfx'
+    [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
+
+    openssl pkcs12 -in $pfxPath -clcerts -nokeys -out (Join-Path $certDir 'ingress.crt') -passin pass:
+    openssl pkcs12 -in $pfxPath -nocerts -nodes -out (Join-Path $certDir 'ingress.key') -passin pass:
+
+    # 3. Apply Secrets to K8s
+    kubectl create namespace ${{ parameters.environment }} --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret docker-registry acr-pull-secret `
+      --docker-server=${{ parameters.acrServer }} `
+      --docker-username="${{ parameters.acrUsername }}" `
+      --docker-password="${{ parameters.acrPassword }}" `
+      --namespace ${{ parameters.environment }} --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret tls praktyki-tls --namespace ${{ parameters.environment }} `
+      --cert=(Join-Path $certDir 'ingress.crt') --key=(Join-Path $certDir 'ingress.key') --dry-run=client -o yaml | kubectl apply -f -
+  displayName: Provision Keys and K8s Secrets
+  env:
+    COSIGN_PRIVATE_KEY: $(cosign-private-key)
+    COSIGN_PUBLIC_KEY: $(cosign-public-key)
+
+- powershell: |
+    helm upgrade --install praktyki-${{ parameters.environment }} `
+      "$(Build.SourcesDirectory)\praktyki" `
+      -f "$(Build.SourcesDirectory)\praktyki\values-${{ parameters.environment }}.yaml" `
+      --namespace ${{ parameters.environment }} `
+      --create-namespace `
+      --set-string api.image.digest=$(API_IMAGE_DIGEST) `
+      --set-string frontend.image.digest=$(FRONTEND_IMAGE_DIGEST) `
+      --set-string postgres.image.digest=$(POSTGRES_IMAGE_DIGEST) `
+      --set-string prometheus.image.digest=$(PROM_IMAGE_DIGEST) `
+      --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
+  displayName: Deploy with Helm
+
+- powershell: |
+    $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
+    foreach ($dep in $deployments) {
+      kubectl rollout status "deployment/$dep" --namespace ${{ parameters.environment }} --timeout=180s
+      if ($LASTEXITCODE -ne 0) { throw "Rollout failed for $dep" }
+    }
+  displayName: Verify Rollouts
