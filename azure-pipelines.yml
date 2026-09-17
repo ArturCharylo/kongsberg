@@ -574,37 +574,6 @@ stages:
         command: login
         containerRegistry: dev
 
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $signatureDirectory = Join-Path "$(Build.SourcesDirectory)" 'cosign-signatures-dev'
-        New-Item -ItemType Directory -Force -Path $signatureDirectory | Out-Null
-        Copy-Item "$(Build.SourcesDirectory)\cosign.pub" (Join-Path $signatureDirectory 'cosign.pub') -Force
-
-        $images = @(
-          'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)'
-        )
-
-        foreach ($image in $images) {
-          $name = ($image -split '/|:')[-2]
-          $signature = Join-Path $signatureDirectory "$name.sig"
-          & "$(COSIGN_EXE)" sign --yes --upload=false --key "$(Build.SourcesDirectory)\cosign.key" --output-signature $signature $image
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign local image $image." }
-        }
-      displayName: Sign DEV images locally
-      env:
-        COSIGN_PASSWORD: $(cosign-password)
-
-    - task: PublishBuildArtifacts@1
-      displayName: Publish DEV image signatures
-      inputs:
-        pathToPublish: '$(Build.SourcesDirectory)\cosign-signatures-dev'
-        artifactName: cosign-signatures-dev
-        artifactType: container
-
     - task: Docker@2
       displayName: Push API DEV
       inputs:
@@ -649,6 +618,39 @@ stages:
         repository: praktyki-grafana
         tags: |
           $(Build.BuildId)
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $images = @(
+          @{ Name = 'API'; Repository = 'praktyki-api' },
+          @{ Name = 'Frontend'; Repository = 'praktyki-frontend' },
+          @{ Name = 'Postgres'; Repository = 'praktyki-postgres' },
+          @{ Name = 'Prometheus'; Repository = 'praktyki-prom' },
+          @{ Name = 'Grafana'; Repository = 'praktyki-grafana' }
+        )
+
+        foreach ($image in $images) {
+          $taggedImage = "knsberg.azurecr.io/$($image.Repository):$(Build.BuildId)"
+          docker pull $taggedImage
+          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $taggedImage." }
+
+          $repoDigest = (docker inspect --format='{{index .RepoDigests 0}}' $taggedImage | Select-Object -First 1).Trim()
+          if ($LASTEXITCODE -ne 0 -or $repoDigest -notmatch '^knsberg\.azurecr\.io/.+@sha256:[0-9a-f]{64}$') {
+            throw "Could not resolve a valid RepoDigest for $taggedImage."
+          }
+          $digest = $repoDigest.Substring($repoDigest.IndexOf('@') + 1)
+          Write-Host "$($image.Name) digest: $repoDigest"
+          Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
+
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $repoDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $repoDigest." }
+
+          & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $repoDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $repoDigest." }
+        }
+      displayName: Sign and verify DEV image digests in ACR
+      env:
+        COSIGN_PASSWORD: $(cosign-password)
 
     - powershell: |
         if ([string]::IsNullOrWhiteSpace($env:DEV_ACR_USERNAME) -or
@@ -771,37 +773,6 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed
 
-    - task: DownloadBuildArtifacts@1
-      displayName: Download DEV image signatures
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: cosign-signatures-dev
-        downloadPath: '$(Pipeline.Workspace)\cosign-artifacts'
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $signatureDirectory = Join-Path "$(Pipeline.Workspace)\cosign-artifacts" 'cosign-signatures-dev'
-        $images = @(
-          'knsberg.azurecr.io/praktyki-api:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-frontend:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-postgres:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-prom:$(Build.BuildId)',
-          'knsberg.azurecr.io/praktyki-grafana:$(Build.BuildId)'
-        )
-
-        foreach ($image in $images) {
-          docker pull $image
-          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $image." }
-          $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') { throw "Could not resolve a pushed digest for $image." }
-          $name = ($image -split '/|:')[-2]
-          & "$(COSIGN_EXE)" verify --offline --key (Join-Path $signatureDirectory 'cosign.pub') --signature (Join-Path $signatureDirectory "$name.sig") $digest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $digest." }
-        }
-      displayName: Verify DEV image signatures from artifact
-
-
     - powershell: |
         $ErrorActionPreference = 'Stop'
         $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'praktyki-dev-tls'
@@ -887,11 +858,11 @@ stages:
           -f "$(Build.SourcesDirectory)\praktyki\values-dev.yaml" `
           --namespace dev `
           --create-namespace `
-          --set api.image.tag=$(Build.BuildId) `
-          --set frontend.image.tag=$(Build.BuildId) `
-          --set postgres.image.tag=$(Build.BuildId) `
-          --set prometheus.image.tag=$(Build.BuildId) `
-          --set grafana.image.tag=$(Build.BuildId)
+          --set-string api.image.digest=$(API_IMAGE_DIGEST) `
+          --set-string frontend.image.digest=$(FRONTEND_IMAGE_DIGEST) `
+          --set-string postgres.image.digest=$(POSTGRES_IMAGE_DIGEST) `
+          --set-string prometheus.image.digest=$(PROMETHEUS_IMAGE_DIGEST) `
+          --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
       displayName: Deploy DEV with Helm
 
     - powershell: |
@@ -1070,37 +1041,6 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed for PROD
 
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $signatureDirectory = Join-Path "$(Build.SourcesDirectory)" 'cosign-signatures-prod'
-        New-Item -ItemType Directory -Force -Path $signatureDirectory | Out-Null
-        Copy-Item "$(Build.SourcesDirectory)\cosign.pub" (Join-Path $signatureDirectory 'cosign.pub') -Force
-
-        $images = @(
-          'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)'
-        )
-
-        foreach ($image in $images) {
-          $name = ($image -split '/|:')[-2]
-          $signature = Join-Path $signatureDirectory "$name.sig"
-          & "$(COSIGN_EXE)" sign --yes --upload=false --key "$(Build.SourcesDirectory)\cosign.key" --output-signature $signature $image
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign local image $image." }
-        }
-      displayName: Sign PROD images locally
-      env:
-        COSIGN_PASSWORD: $(cosign-password)
-
-    - task: PublishBuildArtifacts@1
-      displayName: Publish PROD image signatures
-      inputs:
-        pathToPublish: '$(Build.SourcesDirectory)\cosign-signatures-prod'
-        artifactName: cosign-signatures-prod
-        artifactType: container
-
     - task: Docker@2
       displayName: Push API PROD
       inputs:
@@ -1145,6 +1085,45 @@ stages:
         repository: praktyki-grafana
         tags: |
           $(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Login PROD ACR
+      inputs:
+        command: login
+        containerRegistry: prod
+
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        $images = @(
+          @{ Name = 'API'; Repository = 'praktyki-api' },
+          @{ Name = 'Frontend'; Repository = 'praktyki-frontend' },
+          @{ Name = 'Postgres'; Repository = 'praktyki-postgres' },
+          @{ Name = 'Prometheus'; Repository = 'praktyki-prom' },
+          @{ Name = 'Grafana'; Repository = 'praktyki-grafana' }
+        )
+
+        foreach ($image in $images) {
+          $taggedImage = "kmprod.azurecr.io/$($image.Repository):$(Build.BuildId)"
+          docker pull $taggedImage
+          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $taggedImage." }
+
+          $repoDigest = (docker inspect --format='{{index .RepoDigests 0}}' $taggedImage | Select-Object -First 1).Trim()
+          if ($LASTEXITCODE -ne 0 -or $repoDigest -notmatch '^kmprod\.azurecr\.io/.+@sha256:[0-9a-f]{64}$') {
+            throw "Could not resolve a valid RepoDigest for $taggedImage."
+          }
+          $digest = $repoDigest.Substring($repoDigest.IndexOf('@') + 1)
+          Write-Host "$($image.Name) digest: $repoDigest"
+          Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
+
+          & "$(COSIGN_EXE)" sign --yes --key "$(Build.SourcesDirectory)\cosign.key" $repoDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $repoDigest." }
+
+          & "$(COSIGN_EXE)" verify --key "$(Build.SourcesDirectory)\cosign.pub" $repoDigest
+          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $repoDigest." }
+        }
+      displayName: Sign and verify PROD image digests in ACR
+      env:
+        COSIGN_PASSWORD: $(cosign-password)
 
     - powershell: |
         if ([string]::IsNullOrWhiteSpace($env:PROD_ACR_USERNAME) -or
@@ -1267,41 +1246,6 @@ stages:
         & $cosignPath version
       displayName: Ensure Cosign is installed
 
-    - task: DownloadBuildArtifacts@1
-      displayName: Download PROD image signatures
-      inputs:
-        buildType: current
-        downloadType: specific
-        artifactName: cosign-signatures-prod
-        downloadPath: '$(Pipeline.Workspace)\cosign-artifacts'
-
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $signatureDirectory = Join-Path "$(Pipeline.Workspace)\cosign-artifacts" 'cosign-signatures-prod'
-        $images = @(
-          'kmprod.azurecr.io/praktyki-api:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-frontend:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-postgres:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-prom:$(Build.BuildId)',
-          'kmprod.azurecr.io/praktyki-grafana:$(Build.BuildId)'
-        )
-
-        foreach ($image in $images) {
-          docker pull $image
-          if ($LASTEXITCODE -ne 0) { throw "Could not pull the pushed image $image." }
-
-          $digest = (docker inspect --format='{{index .RepoDigests 0}}' $image | Select-Object -First 1).Trim()
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($digest) -or $digest -notmatch '@sha256:[0-9a-f]+$') {
-            throw "Could not resolve a pushed digest for $image."
-          }
-
-          $name = ($image -split '/|:')[-2]
-          $signature = Join-Path $signatureDirectory "$name.sig"
-          & "$(COSIGN_EXE)" verify --offline --key (Join-Path $signatureDirectory 'cosign.pub') --signature $signature $digest
-          if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $digest." }
-        }
-      displayName: Verify PROD image signatures from artifact
-
     - powershell: |
         $ErrorActionPreference = 'Stop'
         $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'praktyki-prod-tls'
@@ -1387,11 +1331,11 @@ stages:
           -f "$(Build.SourcesDirectory)\praktyki\values-prod.yaml" `
           --namespace prod `
           --create-namespace `
-          --set api.image.tag=$(Build.BuildId) `
-          --set frontend.image.tag=$(Build.BuildId) `
-          --set postgres.image.tag=$(Build.BuildId) `
-          --set prometheus.image.tag=$(Build.BuildId) `
-          --set grafana.image.tag=$(Build.BuildId)
+          --set-string api.image.digest=$(API_IMAGE_DIGEST) `
+          --set-string frontend.image.digest=$(FRONTEND_IMAGE_DIGEST) `
+          --set-string postgres.image.digest=$(POSTGRES_IMAGE_DIGEST) `
+          --set-string prometheus.image.digest=$(PROMETHEUS_IMAGE_DIGEST) `
+          --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
       displayName: Deploy PROD with Helm
 
     - powershell: |

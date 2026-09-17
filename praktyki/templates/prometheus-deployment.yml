@@ -27,7 +27,7 @@ spec:
       {{- end }}
       containers:
       - name: prometheus
-        image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+        image: "{{ .Values.prometheus.image.repository }}{{ if .Values.prometheus.image.digest }}@{{ .Values.prometheus.image.digest }}{{ else }}:{{ .Values.prometheus.image.tag }}{{ end }}"
         imagePullPolicy: IfNotPresent
         args:
         - --config.file=/etc/prometheus/prometheus.yml
