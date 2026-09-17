@@ -38,7 +38,11 @@ steps:
       # Pull remote digest & export as output variable
       $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $target
       $matched = ($repoDigests -split '\s+' | Where-Object { $_ -like "*${{ parameters.acrServer }}/*@sha256:*" } | Select-Object -First 1)
+      if (-not $matched) {
+        $matched = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
+      }
       $digest = $matched.Substring($matched.IndexOf('@') + 1)
+      Write-Host "$name digest: $digest"
       Write-Host "##vso[task.setvariable variable=$($name.ToUpper())_IMAGE_DIGEST]$digest"
     }
   displayName: Tag, Push and Capture Digests
@@ -52,30 +56,47 @@ steps:
     RunAsPreJob: false
 
 - powershell: |
+    $ErrorActionPreference = 'Stop'
+    $utf8 = [Text.UTF8Encoding]::new($false)
+
     # 1. Setup Cosign keys
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.key", "$env:COSIGN_PRIVATE_KEY`n", $utf8)
     [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.pub", "$env:COSIGN_PUBLIC_KEY`n", $utf8)
 
-    # 2. Extract TLS Cert
-    $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'tls'
+    # 2. Extract TLS Cert and Key
+    $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'tls-${{ parameters.environment }}'
     New-Item -ItemType Directory -Force -Path $certDir | Out-Null
     $pfxPath = Join-Path $certDir 'tls.pfx'
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
 
-    openssl pkcs12 -in $pfxPath -clcerts -nokeys -out (Join-Path $certDir 'ingress.crt') -passin pass:
-    openssl pkcs12 -in $pfxPath -nocerts -nodes -out (Join-Path $certDir 'ingress.key') -passin pass:
+    $certPath    = Join-Path $certDir 'ingress.crt'
+    $chainPath   = Join-Path $certDir 'chain.crt'
+    $keyPath     = Join-Path $certDir 'ingress.key'
+    $fullChain   = Join-Path $certDir 'fullchain.crt'
 
-    # 3. Apply Secrets to K8s
+    openssl pkcs12 -in $pfxPath -clcerts -nokeys -out $certPath -passin pass:
+    openssl pkcs12 -in $pfxPath -cacerts -nokeys -out $chainPath -passin pass:
+    openssl pkcs12 -in $pfxPath -nocerts -nodes -out $keyPath -passin pass:
+
+    # Combine certs into full chain
+    $combined = (Get-Content $certPath -Raw) + (Get-Content $chainPath -Raw)
+    [IO.File]::WriteAllText($fullChain, $combined, $utf8)
+
+    # 3. Apply Secrets to K8s with securely quoted variables
     kubectl create namespace ${{ parameters.environment }} --dry-run=client -o yaml | kubectl apply -f -
+
     kubectl create secret docker-registry acr-pull-secret `
       --docker-server=${{ parameters.acrServer }} `
       --docker-username="${{ parameters.acrUsername }}" `
       --docker-password="${{ parameters.acrPassword }}" `
-      --namespace ${{ parameters.environment }} --dry-run=client -o yaml | kubectl apply -f -
+      --namespace ${{ parameters.environment }} `
+      --dry-run=client -o yaml | kubectl apply -f -
 
-    kubectl create secret tls praktyki-tls --namespace ${{ parameters.environment }} `
-      --cert=(Join-Path $certDir 'ingress.crt') --key=(Join-Path $certDir 'ingress.key') --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret tls praktyki-tls `
+      --namespace ${{ parameters.environment }} `
+      --cert="$fullChain" `
+      --key="$keyPath" `
+      --dry-run=client -o yaml | kubectl apply -f -
   displayName: Provision Keys and K8s Secrets
   env:
     COSIGN_PRIVATE_KEY: $(cosign-private-key)
