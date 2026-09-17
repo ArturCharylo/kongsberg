@@ -13,12 +13,92 @@ parameters:
 steps:
 - checkout: self
 
+# 1. Download Keys & TLS Cert from Key Vault
+- task: AzureKeyVault@2
+  displayName: Download Ingress TLS and Cosign Keys
+  inputs:
+    azureSubscription: 'key-vault'
+    KeyVaultName: 'kongsberg'
+    SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
+    RunAsPreJob: false
+
+# 2. Ensure Cosign tool is present
+- powershell: |
+    $ErrorActionPreference = 'Stop'
+    $cosign = Join-Path $env:AGENT_TEMPDIRECTORY 'cosign\cosign.exe'
+    if (-not (Test-Path $cosign)) {
+      New-Item -ItemType Directory -Force -Path (Split-Path $cosign) | Out-Null
+      Invoke-WebRequest -Uri 'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-windows-amd64.exe' -OutFile $cosign -UseBasicParsing
+    }
+    Write-Host "##vso[task.setvariable variable=COSIGN_EXE]$cosign"
+  displayName: Ensure Cosign is Installed
+
+# 3. Restore Keys & Ingress Secret for Kubernetes
+- powershell: |
+    $ErrorActionPreference = 'Stop'
+    $utf8 = [Text.UTF8Encoding]::new($false)
+
+    # Restore Cosign Keys to workspace
+    [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.key", "$env:COSIGN_PRIVATE_KEY`n", $utf8)
+    [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.pub", "$env:COSIGN_PUBLIC_KEY`n", $utf8)
+
+    # Restore Ingress Cert and Key
+    $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'tls-${{ parameters.environment }}'
+    New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+    $pfxPath = Join-Path $certDir 'tls.pfx'
+    [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
+
+    $certPath  = Join-Path $certDir 'ingress.crt'
+    $chainPath = Join-Path $certDir 'chain.crt'
+    $keyPath   = Join-Path $certDir 'ingress.key'
+    $fullChain = Join-Path $certDir 'fullchain.crt'
+
+    openssl pkcs12 -in $pfxPath -clcerts -nokeys -out $certPath -passin pass:
+    openssl pkcs12 -in $pfxPath -cacerts -nokeys -out $chainPath -passin pass:
+    openssl pkcs12 -in $pfxPath -nocerts -nodes -out $keyPath -passin pass:
+
+    $combined = (Get-Content $certPath -Raw) + (Get-Content $chainPath -Raw)
+    [IO.File]::WriteAllText($fullChain, $combined, $utf8)
+
+    # Kubernetes namespace & secrets
+    kubectl create namespace ${{ parameters.environment }} --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret docker-registry acr-pull-secret `
+      --docker-server=${{ parameters.acrServer }} `
+      --docker-username="${{ parameters.acrUsername }}" `
+      --docker-password="${{ parameters.acrPassword }}" `
+      --namespace ${{ parameters.environment }} `
+      --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret tls praktyki-tls `
+      --namespace ${{ parameters.environment }} `
+      --cert="$fullChain" `
+      --key="$keyPath" `
+      --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create configmap grafana-dashboards `
+      --from-file=kongsberg-monitoring.json="$(Build.SourcesDirectory)\monitoring\dashboards\kongsberg-monitoring.json" `
+      --namespace ${{ parameters.environment }} `
+      --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret generic grafana-alerting `
+      --from-literal=azure-devops-pat="$env:AZURE_DEVOPS_PAT" `
+      --namespace ${{ parameters.environment }} `
+      --dry-run=client -o yaml | kubectl apply -f -
+  displayName: Provision Keys and K8s Secrets
+  env:
+    COSIGN_PRIVATE_KEY: $(cosign-private-key)
+    COSIGN_PUBLIC_KEY: $(cosign-public-key)
+    AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)
+
+# 4. Login to ACR
 - task: Docker@2
   displayName: Login to ACR
   inputs:
     command: login
     containerRegistry: ${{ parameters.acrServiceConnection }}
 
+# 5. Push, Sign and Verify Images with Cosign (Zadanie 8)
 - powershell: |
     $ErrorActionPreference = 'Stop'
     $images = @('api', 'frontend', 'postgres', 'prom', 'grafana')
@@ -34,9 +114,7 @@ steps:
       $source = $sourceNames[$name]
       $target = "${{ parameters.acrServer }}/praktyki-${name}:$($env:BUILD_BUILDID)"
 
-      # Ensure base images exist locally before tagging
       if ($name -in @('postgres', 'prom', 'grafana')) {
-        Write-Host "Pulling base image: $source"
         docker pull $source
         if ($LASTEXITCODE -ne 0) { throw "Failed to pull base image $source" }
       }
@@ -45,7 +123,7 @@ steps:
       docker push $target
       if ($LASTEXITCODE -ne 0) { throw "Failed to push $target" }
 
-      # Pull remote target to resolve fresh repo digest
+      # Pull back to resolve exact RepoDigest
       docker pull $target
       $repoDigests = docker inspect --format='{{range .RepoDigests}}{{.}} {{end}}' $target
       $matched = ($repoDigests -split '\s+' | Where-Object { $_ -like "*${{ parameters.acrServer }}/praktyki-${name}@sha256:*" } | Select-Object -First 1)
@@ -53,71 +131,23 @@ steps:
         $matched = ($repoDigests -split '\s+' | Where-Object { $_ -match '@sha256:[0-9a-f]{64}$' } | Select-Object -First 1)
       }
 
-      if (-not $matched) {
-        throw "Could not find RepoDigest for $target"
-      }
-
       $digest = $matched.Substring($matched.IndexOf('@') + 1)
       Write-Host "$name digest: $digest"
       Write-Host "##vso[task.setvariable variable=$($name.ToUpper())_IMAGE_DIGEST]$digest"
+
+      # Sign image in ACR (Zadanie 8)
+      & "$(COSIGN_EXE)" sign --yes --tlog-upload=false --key "$(Build.SourcesDirectory)\cosign.key" $matched
+      if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $matched" }
+
+      # Verify signature
+      & "$(COSIGN_EXE)" verify --insecure-ignore-tlog=true --key "$(Build.SourcesDirectory)\cosign.pub" $matched
+      if ($LASTEXITCODE -ne 0) { throw "Cosign failed to verify $matched" }
     }
-  displayName: Pull Base Images, Tag, Push and Capture Digests
-
-- task: AzureKeyVault@2
-  displayName: Download Ingress TLS and Cosign Keys
-  inputs:
-    azureSubscription: 'key-vault'
-    KeyVaultName: 'kongsberg'
-    SecretsFilter: 'ingress-tls,cosign-private-key,cosign-public-key'
-    RunAsPreJob: false
-
-- powershell: |
-    $ErrorActionPreference = 'Stop'
-    $utf8 = [Text.UTF8Encoding]::new($false)
-
-    # 1. Setup Cosign keys
-    [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.key", "$env:COSIGN_PRIVATE_KEY`n", $utf8)
-    [IO.File]::WriteAllText("$(Build.SourcesDirectory)\cosign.pub", "$env:COSIGN_PUBLIC_KEY`n", $utf8)
-
-    # 2. Extract TLS Cert and Key
-    $certDir = Join-Path $env:AGENT_TEMPDIRECTORY 'tls-${{ parameters.environment }}'
-    New-Item -ItemType Directory -Force -Path $certDir | Out-Null
-    $pfxPath = Join-Path $certDir 'tls.pfx'
-    [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("$(ingress-tls)"))
-
-    $certPath    = Join-Path $certDir 'ingress.crt'
-    $chainPath   = Join-Path $certDir 'chain.crt'
-    $keyPath     = Join-Path $certDir 'ingress.key'
-    $fullChain   = Join-Path $certDir 'fullchain.crt'
-
-    openssl pkcs12 -in $pfxPath -clcerts -nokeys -out $certPath -passin pass:
-    openssl pkcs12 -in $pfxPath -cacerts -nokeys -out $chainPath -passin pass:
-    openssl pkcs12 -in $pfxPath -nocerts -nodes -out $keyPath -passin pass:
-
-    # Combine certs into full chain
-    $combined = (Get-Content $certPath -Raw) + (Get-Content $chainPath -Raw)
-    [IO.File]::WriteAllText($fullChain, $combined, $utf8)
-
-    # 3. Apply Secrets to K8s with securely quoted variables
-    kubectl create namespace ${{ parameters.environment }} --dry-run=client -o yaml | kubectl apply -f -
-
-    kubectl create secret docker-registry acr-pull-secret `
-      --docker-server=${{ parameters.acrServer }} `
-      --docker-username="${{ parameters.acrUsername }}" `
-      --docker-password="${{ parameters.acrPassword }}" `
-      --namespace ${{ parameters.environment }} `
-      --dry-run=client -o yaml | kubectl apply -f -
-
-    kubectl create secret tls praktyki-tls `
-      --namespace ${{ parameters.environment }} `
-      --cert="$fullChain" `
-      --key="$keyPath" `
-      --dry-run=client -o yaml | kubectl apply -f -
-  displayName: Provision Keys and K8s Secrets
+  displayName: Push, Sign and Verify Images
   env:
-    COSIGN_PRIVATE_KEY: $(cosign-private-key)
-    COSIGN_PUBLIC_KEY: $(cosign-public-key)
+    COSIGN_PASSWORD: $(cosign-password)
 
+# 6. Deploy with Helm
 - powershell: |
     helm upgrade --install praktyki-${{ parameters.environment }} `
       "$(Build.SourcesDirectory)\praktyki" `
@@ -131,6 +161,7 @@ steps:
       --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
   displayName: Deploy with Helm
 
+# 7. Verify Rollouts
 - powershell: |
     $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
     foreach ($dep in $deployments) {
