@@ -669,7 +669,7 @@ stages:
           Write-Host "$($image.Name) digest: $matchedDigest"
           Write-Host "##vso[task.setvariable variable=$($image.Name.ToUpper())_IMAGE_DIGEST]$digest"
 
-          & "$(COSIGN_EXE)" sign --yes - --tlog-upload=false --key "$(Build.SourcesDirectory)\cosign.key" $matchedDigest
+          & "$(COSIGN_EXE)" sign --yes --tlog-upload=false --key "$(Build.SourcesDirectory)\cosign.key" $matchedDigest
           if ($LASTEXITCODE -ne 0) { throw "Cosign failed to sign $matchedDigest." }
 
           & "$(COSIGN_EXE)" verify --insecure-ignore-tlog=true --key "$(Build.SourcesDirectory)\cosign.pub" $matchedDigest
