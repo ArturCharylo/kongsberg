@@ -135,7 +135,16 @@ steps:
     command: login
     containerRegistry: ${{ parameters.acrServiceConnection }}
 
-# 5. Push, Sign and Verify Images with Cosign (Zadanie 8)
+# 5. Download and publish CI metrics to Pushgateway
+- task: DownloadBuildArtifacts@1
+  displayName: Download CI metrics
+  inputs:
+    buildType: current
+    downloadType: single
+    artifactName: ci-metrics
+    downloadPath: '$(Pipeline.Workspace)'
+
+# 6. Push, Sign and Verify Images with Cosign (Zadanie 8)
 - powershell: |
     $ErrorActionPreference = 'Stop'
     $images = @('api', 'frontend', 'postgres', 'prom', 'grafana')
@@ -184,7 +193,7 @@ steps:
   env:
     COSIGN_PASSWORD: $(cosign-password)
 
-# 6. Deploy with Helm
+# 7. Deploy with Helm
 - powershell: |
     helm upgrade --install praktyki-${{ parameters.environment }} `
       "$(Build.SourcesDirectory)\praktyki" `
@@ -198,7 +207,52 @@ steps:
       --set-string grafana.image.digest=$(GRAFANA_IMAGE_DIGEST)
   displayName: Deploy with Helm
 
-# 7. Verify Rollouts
+# 8. Upload CI metrics after Pushgateway is deployed
+- powershell: |
+    $ErrorActionPreference = 'Stop'
+    $metricsPath = Join-Path '$(Pipeline.Workspace)' 'ci-metrics'
+    $metricFiles = @(Get-ChildItem -Path $metricsPath -Filter '*.prom' -File -ErrorAction SilentlyContinue)
+    if ($metricFiles.Count -eq 0) {
+      throw "No Prometheus metric files found in $metricsPath"
+    }
+
+    $forward = Start-Process kubectl -ArgumentList @(
+      'port-forward',
+      '--namespace', '${{ parameters.environment }}',
+      'service/pushgateway',
+      '19091:9091'
+    ) -PassThru -WindowStyle Hidden
+
+    try {
+      $ready = $false
+      1..30 | ForEach-Object {
+        if ($ready) { return }
+        try {
+          Invoke-WebRequest -Uri 'http://127.0.0.1:19091/-/ready' -UseBasicParsing -TimeoutSec 2 | Out-Null
+          $ready = $true
+        }
+        catch { }
+      }
+      if (-not $ready) { throw 'Pushgateway port-forward did not become ready' }
+
+      foreach ($file in $metricFiles) {
+        Invoke-WebRequest `
+          -Uri "http://127.0.0.1:19091/metrics/job/ci/environment/${{ parameters.environment }}" `
+          -Method Put `
+          -InFile $file.FullName `
+          -ContentType 'text/plain; version=0.0.4' `
+          -UseBasicParsing | Out-Null
+        Write-Host "Uploaded $($file.Name)"
+      }
+    }
+    finally {
+      if ($forward -and -not $forward.HasExited) {
+        Stop-Process -Id $forward.Id -Force
+      }
+    }
+  displayName: Publish CI metrics to Pushgateway
+
+# 9. Verify Rollouts
 - powershell: |
     $deployments = @('api', 'frontend', 'postgres', 'prometheus', 'grafana')
     foreach ($dep in $deployments) {
