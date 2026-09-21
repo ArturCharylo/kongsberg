@@ -216,6 +216,16 @@ steps:
       throw "No Prometheus metric files found in $metricsPath"
     }
 
+    $combinedMetrics = Join-Path $env:TEMP "ci-metrics-${{ parameters.environment }}.prom"
+    $metricContent = foreach ($file in $metricFiles) {
+      Get-Content -Path $file.FullName -Raw
+    }
+    [IO.File]::WriteAllText(
+      $combinedMetrics,
+      (($metricContent -join "`n").TrimEnd() + "`n"),
+      [Text.UTF8Encoding]::new($false)
+    )
+
     $forward = Start-Process kubectl -ArgumentList @(
       'port-forward',
       '--namespace', '${{ parameters.environment }}',
@@ -235,20 +245,19 @@ steps:
       }
       if (-not $ready) { throw 'Pushgateway port-forward did not become ready' }
 
-      foreach ($file in $metricFiles) {
-        Invoke-WebRequest `
-          -Uri "http://127.0.0.1:19091/metrics/job/ci/environment/${{ parameters.environment }}" `
-          -Method Put `
-          -InFile $file.FullName `
-          -ContentType 'text/plain; version=0.0.4' `
-          -UseBasicParsing | Out-Null
-        Write-Host "Uploaded $($file.Name)"
-      }
+      Invoke-WebRequest `
+        -Uri "http://127.0.0.1:19091/metrics/job/ci/environment/${{ parameters.environment }}" `
+        -Method Put `
+        -InFile $combinedMetrics `
+        -ContentType 'text/plain; version=0.0.4' `
+        -UseBasicParsing | Out-Null
+      Write-Host "Uploaded $($metricFiles.Count) metric files as one Pushgateway group"
     }
     finally {
       if ($forward -and -not $forward.HasExited) {
         Stop-Process -Id $forward.Id -Force
       }
+      Remove-Item $combinedMetrics -Force -ErrorAction SilentlyContinue
     }
   displayName: Publish CI metrics to Pushgateway
 
