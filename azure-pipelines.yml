@@ -110,6 +110,13 @@ stages:
       displayName: Generate static analysis metrics
       condition: succeededOrFailed()
 
+    - task: PublishBuildArtifacts@1
+      displayName: Publish static analysis metrics
+      inputs:
+        pathToPublish: '$(Build.SourcesDirectory)/web-static-analysis-metrics.prom'
+        artifactName: static-analysis-metrics
+      condition: succeededOrFailed()
+
     # 5. Generate & Upload Markdown to Pipeline Summary Tab (Zadanie 11)
     - powershell: |
         @'
@@ -168,6 +175,14 @@ stages:
     pool:
       name: Default
     steps:
+    - task: DownloadBuildArtifacts@1
+      displayName: Download static analysis metrics
+      inputs:
+        buildType: current
+        downloadType: single
+        artifactName: static-analysis-metrics
+        downloadPath: '$(Pipeline.Workspace)'
+
     - powershell: |
         New-Item -ItemType Directory -Force -Path "security-reports", "sbom-reports" | Out-Null
 
@@ -259,6 +274,10 @@ stages:
 
     - powershell: |
         New-Item -ItemType Directory -Force -Path "ci-metrics" | Out-Null
+        $staticMetrics = "$(Pipeline.Workspace)\static-analysis-metrics\web-static-analysis-metrics.prom"
+        if (Test-Path $staticMetrics) {
+          Copy-Item $staticMetrics -Destination "web-static-analysis-metrics.prom" -Force
+        }
         Copy-Item "*.prom" -Destination "ci-metrics" -Force
       displayName: Stage Prometheus Metrics
 
