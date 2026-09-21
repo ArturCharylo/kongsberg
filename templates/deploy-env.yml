@@ -218,7 +218,7 @@ steps:
 
     $combinedMetrics = Join-Path $env:TEMP "ci-metrics-${{ parameters.environment }}.prom"
     $metricContent = foreach ($file in $metricFiles) {
-      Get-Content -Path $file.FullName -Raw
+      (Get-Content -Path $file.FullName -Raw) -replace "`r`n?", "`n"
     }
     [IO.File]::WriteAllText(
       $combinedMetrics,
